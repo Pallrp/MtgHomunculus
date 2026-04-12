@@ -40,14 +40,34 @@ class _GameTrackerScreenState extends State<GameTrackerScreen> {
       body: Center(
         child: Padding(
           padding: const EdgeInsets.all(16.0),
-          child: SizedBox(
-            width: 220,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 300, maxHeight: 260),
             child: PlayerCard(
               player: _game.players.first,
               isActive: true,
               onLifeChange: (delta) {
                 setState(() {
                   _game = _game.updatePlayerLife(0, delta);
+                });
+              },
+              onTrackerChange: (trackerId, delta) {
+                setState(() {
+                  _game = _game.updateTrackerValue(0, trackerId, delta);
+                });
+              },
+              onTrackerAdd: (tracker) {
+                setState(() {
+                  _game = _game.addTrackerToPlayer(0, tracker);
+                });
+              },
+              onTrackerRemove: (trackerId) {
+                setState(() {
+                  _game = _game.removeTrackerFromPlayer(0, trackerId);
+                });
+              },
+              onTrackerReorder: (oldIndex, newIndex) {
+                setState(() {
+                  _game = _game.reorderPlayerTrackers(0, oldIndex, newIndex);
                 });
               },
             ),

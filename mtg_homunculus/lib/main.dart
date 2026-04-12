@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'screens/game_tracker_screen.dart';
+import 'features/game_tracker/screens/game_tracker_screen.dart';
 
 void main() {
   runApp(const MtgHomunculusApp());

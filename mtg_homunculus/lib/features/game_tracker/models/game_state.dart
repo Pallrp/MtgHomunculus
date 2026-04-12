@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'player.dart';
+import 'tracker.dart';
 
 // Default color palette — one per player slot (supports up to 6 players)
 const List<Color> kPlayerColors = [
@@ -55,6 +56,49 @@ class GameState {
             ))
         .toList();
     return copyWith(players: updated, activePlayerIndex: nextIndex);
+  }
+
+  // Add a tracker to a player's tracker list
+  GameState addTrackerToPlayer(int playerIndex, Tracker tracker) {
+    final updated = List<Player>.from(players);
+    final player = players[playerIndex];
+    updated[playerIndex] = player.copyWith(
+      trackers: [...player.trackers, tracker],
+    );
+    return copyWith(players: updated);
+  }
+
+  // Remove a tracker from a player's tracker list by id
+  GameState removeTrackerFromPlayer(int playerIndex, String trackerId) {
+    final updated = List<Player>.from(players);
+    final player = players[playerIndex];
+    updated[playerIndex] = player.copyWith(
+      trackers: player.trackers.where((t) => t.id != trackerId).toList(),
+    );
+    return copyWith(players: updated);
+  }
+
+  // Reorder a player's trackers. oldIndex and newIndex are already adjusted
+  // (Flutter's ReorderableListView adjustment is done before calling this).
+  GameState reorderPlayerTrackers(int playerIndex, int oldIndex, int newIndex) {
+    final updated = List<Player>.from(players);
+    final player = players[playerIndex];
+    final trackers = List<Tracker>.from(player.trackers);
+    final item = trackers.removeAt(oldIndex);
+    trackers.insert(newIndex, item);
+    updated[playerIndex] = player.copyWith(trackers: trackers);
+    return copyWith(players: updated);
+  }
+
+  // Adjust one tracker's value by delta for the given player
+  GameState updateTrackerValue(int playerIndex, String trackerId, int delta) {
+    final player = players[playerIndex];
+    final updatedTrackers = player.trackers
+        .map((t) => t.id == trackerId ? t.copyWith(value: t.value + delta) : t)
+        .toList();
+    final updated = List<Player>.from(players);
+    updated[playerIndex] = player.copyWith(trackers: updatedTrackers);
+    return copyWith(players: updated);
   }
 
   // Adjust one player's life total by delta (positive or negative)
