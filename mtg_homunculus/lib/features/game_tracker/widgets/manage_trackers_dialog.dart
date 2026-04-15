@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'package:flutter/material.dart';
 import '../models/tracker.dart';
 import '../models/default_trackers.dart';
@@ -6,6 +7,7 @@ enum _Mode { manage, pick, create }
 
 class ManageTrackersDialog extends StatefulWidget {
   final List<Tracker> trackers;
+  final int quarterTurns;
   final void Function(Tracker tracker) onAdd;
   final void Function(String trackerId) onRemove;
   final void Function(int oldIndex, int newIndex) onReorder;
@@ -13,6 +15,7 @@ class ManageTrackersDialog extends StatefulWidget {
   const ManageTrackersDialog({
     super.key,
     required this.trackers,
+    required this.quarterTurns,
     required this.onAdd,
     required this.onRemove,
     required this.onReorder,
@@ -97,47 +100,54 @@ class _ManageTrackersDialogState extends State<ManageTrackersDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return Dialog(
-      backgroundColor: const Color(0xFF2A2A2A),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: SizedBox(
-        width: 320,
-        child: AnimatedSize(
-          duration: const Duration(milliseconds: 180),
-          curve: Curves.easeInOut,
-          child: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 150),
-            child: switch (_mode) {
-              _Mode.manage => _ManageView(
-                  key: const ValueKey(_Mode.manage),
-                  trackers: _trackers,
-                  onReorder: _onReorder,
-                  onRemove: _removeTracker,
-                  onAddTap: () => setState(() {
-                    _searchController.clear();
-                    _mode = _Mode.pick;
-                  }),
-                  onClose: () => Navigator.pop(context),
-                ),
-              _Mode.pick => _PickView(
-                  key: const ValueKey(_Mode.pick),
-                  searchController: _searchController,
-                  availableTrackers: _availableTrackers,
-                  onBack: () => setState(() => _mode = _Mode.manage),
-                  onSelect: _addTracker,
-                  onCreateTap: () => setState(() => _mode = _Mode.create),
-                  onSearchChanged: () => setState(() {}),
-                ),
-              _Mode.create => _CreateView(
-                  key: const ValueKey(_Mode.create),
-                  nameController: _nameController,
-                  iconController: _iconController,
-                  permanent: _newPermanent,
-                  onPermanentChanged: (val) => setState(() => _newPermanent = val),
-                  onBack: () => setState(() => _mode = _Mode.pick),
-                  onSubmit: _submitCreate,
-                ),
-            },
+    // Only rotate in manage mode. Pick/create views contain text fields — the
+    // system keyboard always comes from the physical bottom of the screen, so
+    // keeping those views portrait lets the keyboard align correctly.
+    final angle = _mode == _Mode.manage ? widget.quarterTurns * pi / 2 : 0.0;
+    return Transform.rotate(
+      angle: angle,
+      child: Dialog(
+        backgroundColor: const Color(0xFF2A2A2A),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: SizedBox(
+          width: 320,
+          child: AnimatedSize(
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeInOut,
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 150),
+              child: switch (_mode) {
+                _Mode.manage => _ManageView(
+                    key: const ValueKey(_Mode.manage),
+                    trackers: _trackers,
+                    onReorder: _onReorder,
+                    onRemove: _removeTracker,
+                    onAddTap: () => setState(() {
+                      _searchController.clear();
+                      _mode = _Mode.pick;
+                    }),
+                    onClose: () => Navigator.pop(context),
+                  ),
+                _Mode.pick => _PickView(
+                    key: const ValueKey(_Mode.pick),
+                    searchController: _searchController,
+                    availableTrackers: _availableTrackers,
+                    onBack: () => setState(() => _mode = _Mode.manage),
+                    onSelect: _addTracker,
+                    onCreateTap: () => setState(() => _mode = _Mode.create),
+                    onSearchChanged: () => setState(() {}),
+                  ),
+                _Mode.create => _CreateView(
+                    key: const ValueKey(_Mode.create),
+                    nameController: _nameController,
+                    iconController: _iconController,
+                    permanent: _newPermanent,
+                    onPermanentChanged: (val) => setState(() => _newPermanent = val),
+                    onBack: () => setState(() => _mode = _Mode.pick),
+                    onSubmit: _submitCreate,
+                  ),
+              },
+            ),
           ),
         ),
       ),
@@ -319,7 +329,6 @@ class _PickView extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: TextField(
               controller: searchController,
-              autofocus: true,
               style: const TextStyle(color: Colors.white, fontSize: 14),
               decoration: InputDecoration(
                 hintText: 'Search...',

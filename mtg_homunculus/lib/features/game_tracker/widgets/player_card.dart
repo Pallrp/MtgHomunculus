@@ -1,31 +1,57 @@
 import 'dart:async';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import '../models/player.dart';
 import '../models/tracker.dart';
 import 'manage_trackers_dialog.dart';
 
-class PlayerCard extends StatelessWidget {
+class PlayerCard extends StatefulWidget {
   final Player player;
+  // All players in the game, including self — needed to build the opponent rows.
+  final List<Player> allPlayers;
   final bool isActive;
   final void Function(int delta) onLifeChange;
   final void Function(String trackerId, int delta) onTrackerChange;
   final void Function(Tracker tracker) onTrackerAdd;
   final void Function(String trackerId) onTrackerRemove;
   final void Function(int oldIndex, int newIndex) onTrackerReorder;
+  // attackerId is the opponent whose commander dealt the damage.
+  final void Function(String attackerId, int delta) onCommanderDamage;
 
   const PlayerCard({
     super.key,
     required this.player,
+    required this.allPlayers,
     required this.onLifeChange,
     required this.onTrackerChange,
     required this.onTrackerAdd,
     required this.onTrackerRemove,
     required this.onTrackerReorder,
+    required this.onCommanderDamage,
     this.isActive = false,
   });
 
+  @override
+  State<PlayerCard> createState() => _PlayerCardState();
+}
+
+class _PlayerCardState extends State<PlayerCard> {
+  bool _showingCommanderDamage = false;
+
+  List<Player> get _opponents =>
+      widget.allPlayers.where((p) => p.id != widget.player.id).toList();
+
+  @override
+  void didUpdateWidget(PlayerCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Close the commander damage view if there are no longer any opponents
+    // (e.g. new game started with a single player).
+    if (_showingCommanderDamage && _opponents.isEmpty) {
+      setState(() => _showingCommanderDamage = false);
+    }
+  }
+
   // Returns a lightened version of [base] for use as the active border color.
-  // HSLColor lets us adjust lightness independently of hue/saturation.
   Color _lighten(Color base) {
     final hsl = HSLColor.fromColor(base);
     return hsl.withLightness((hsl.lightness + 0.1).clamp(0.0, 1.0)).toColor();
@@ -33,48 +59,130 @@ class PlayerCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final borderColor = isActive
+    final player = widget.player;
+    final opponents = _opponents;
+    final borderColor = widget.isActive
         ? _lighten(player.color)
         : player.color.withValues(alpha: 0.6);
 
+    final trackerRow = _TrackerPillsRow(
+      trackers: player.trackers,
+      playerColor: player.color,
+      quarterTurns: player.quarterTurns,
+      onTrackerChange: widget.onTrackerChange,
+      onTrackerRemove: widget.onTrackerRemove,
+      onManageTap: (context) => showDialog<void>(
+        context: context,
+        builder: (_) => ManageTrackersDialog(
+          trackers: player.trackers,
+          quarterTurns: player.quarterTurns,
+          onAdd: widget.onTrackerAdd,
+          onRemove: widget.onTrackerRemove,
+          onReorder: widget.onTrackerReorder,
+        ),
+      ),
+    );
+
+    final lifeArea = Expanded(
+      child: _LifeTotalArea(
+        lifeTotal: player.lifeTotal,
+        onLifeChange: widget.onLifeChange,
+        onSwipe: opponents.isNotEmpty
+            ? () => setState(() => _showingCommanderDamage = true)
+            : null,
+      ),
+    );
+
+    // One shield icon + damage number per opponent who has dealt commander
+    // damage. Icon uses the opponent's full color; number is plain white.
+    // Hidden entirely when no commander damage has been received.
+    final damagedBy = opponents
+        .where((opp) => (player.commanderDamage[opp.id] ?? 0) > 0)
+        .toList();
+    final cmdDmgRow = damagedBy.isEmpty
+        ? const SizedBox.shrink()
+        : SizedBox(
+            height: 20,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: damagedBy.map((opp) => Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.shield, color: opp.color, size: 13),
+                    const SizedBox(width: 2),
+                    Text(
+                      '${player.commanderDamage[opp.id]}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        height: 1,
+                      ),
+                    ),
+                  ],
+                ),
+              )).toList(),
+            ),
+          );
+
+    // Life total content — tracker row + life area — wrapped in a RotatedBox so
+    // the player reads it from their seat. Scoped to this child only so the
+    // damage view below is unaffected by the rotation.
+    final lifeTotalView = RotatedBox(
+      key: const ValueKey('life'),
+      quarterTurns: player.quarterTurns,
+      child: Column(
+        mainAxisSize: MainAxisSize.max,
+        // For bottomEdge the tracker row sits at the widget top (outer edge).
+        // For every other seat the card is rotated so trackers go at the bottom.
+        children: player.seatPosition == SeatPosition.bottomEdge
+            ? [trackerRow, cmdDmgRow, lifeArea]
+            : [lifeArea, cmdDmgRow, trackerRow],
+      ),
+    );
+
+    // The container border stays in screen space regardless of which child is
+    // shown. AnimatedSwitcher fades between the rotated life view and the
+    // screen-space damage grid. Background clears to transparent during the
+    // damage view so cell colors render against the dark game background.
     return Container(
       decoration: BoxDecoration(
-        color: player.color.withValues(alpha: 0.2),
+        color: _showingCommanderDamage
+            ? Colors.transparent
+            : player.color.withValues(alpha: 0.2),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
           color: borderColor,
-          width: isActive ? 3.0 : 1.5,
+          width: widget.isActive ? 3.0 : 1.5,
         ),
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _TrackerPillsRow(
-            trackers: player.trackers,
-            playerColor: player.color,
-            onTrackerChange: onTrackerChange,
-            onTrackerRemove: onTrackerRemove,
-            onManageTap: (context) => showDialog<void>(
-              context: context,
-              builder: (_) => ManageTrackersDialog(
-                trackers: player.trackers,
-                onAdd: onTrackerAdd,
-                onRemove: onTrackerRemove,
-                onReorder: onTrackerReorder,
-              ),
-            ),
-          ),
-          _LifeTotalArea(lifeTotal: player.lifeTotal, onLifeChange: onLifeChange),
-        ],
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 200),
+        child: _showingCommanderDamage && opponents.isNotEmpty
+            ? _CommanderDamageView(
+                key: const ValueKey('cmd'),
+                self: player,
+                allPlayers: widget.allPlayers,
+                onDamageChange: widget.onCommanderDamage,
+                onClose: () => setState(() => _showingCommanderDamage = false),
+              )
+            : lifeTotalView,
       ),
     );
   }
 }
 
-// Top row: horizontally scrollable tracker pills + manage button.
+// ---------------------------------------------------------------------------
+// Tracker pill row
+// ---------------------------------------------------------------------------
+
+// Horizontally scrollable tracker pills + manage button (always trailing).
 class _TrackerPillsRow extends StatelessWidget {
   final List<Tracker> trackers;
   final Color playerColor;
+  final int quarterTurns;
   final void Function(String trackerId, int delta) onTrackerChange;
   final void Function(String trackerId) onTrackerRemove;
   final void Function(BuildContext context) onManageTap;
@@ -82,6 +190,7 @@ class _TrackerPillsRow extends StatelessWidget {
   const _TrackerPillsRow({
     required this.trackers,
     required this.playerColor,
+    required this.quarterTurns,
     required this.onTrackerChange,
     required this.onTrackerRemove,
     required this.onManageTap,
@@ -104,13 +213,13 @@ class _TrackerPillsRow extends StatelessWidget {
                 return _TrackerPill(
                   tracker: tracker,
                   playerColor: playerColor,
+                  quarterTurns: quarterTurns,
                   onChange: (delta) => onTrackerChange(tracker.id, delta),
                   onRemove: () => onTrackerRemove(tracker.id),
                 );
               },
             ),
           ),
-          // Manage button — opens the tracker management dialog
           Padding(
             padding: const EdgeInsets.only(right: 6),
             child: GestureDetector(
@@ -135,12 +244,14 @@ class _TrackerPillsRow extends StatelessWidget {
 class _TrackerPill extends StatelessWidget {
   final Tracker tracker;
   final Color playerColor;
+  final int quarterTurns;
   final void Function(int delta) onChange;
   final VoidCallback onRemove;
 
   const _TrackerPill({
     required this.tracker,
     required this.playerColor,
+    required this.quarterTurns,
     required this.onChange,
     required this.onRemove,
   });
@@ -150,6 +261,7 @@ class _TrackerPill extends StatelessWidget {
       context: context,
       builder: (_) => _TrackerEditDialog(
         tracker: tracker,
+        quarterTurns: quarterTurns,
         onChange: onChange,
         onRemove: onRemove,
       ),
@@ -182,16 +294,21 @@ class _TrackerPill extends StatelessWidget {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Tracker edit dialog
+// ---------------------------------------------------------------------------
+
 // Centered dialog for adjusting a tracker value.
 // Owns a local _value so the display updates live without closing the dialog.
-// The parent's onChange is called on every adjustment so game state stays in sync.
 class _TrackerEditDialog extends StatefulWidget {
   final Tracker tracker;
+  final int quarterTurns;
   final void Function(int delta) onChange;
   final VoidCallback onRemove;
 
   const _TrackerEditDialog({
     required this.tracker,
+    required this.quarterTurns,
     required this.onChange,
     required this.onRemove,
   });
@@ -216,57 +333,60 @@ class _TrackerEditDialogState extends State<_TrackerEditDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return Dialog(
-      backgroundColor: const Color(0xFF2A2A2A),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 28),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              '${widget.tracker.icon}  ${widget.tracker.name}',
-              style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 24),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                _DialogAdjustButton(label: '−', onTap: () => _adjust(-1)),
-                Text(
-                  '$_value',
-                  style: const TextStyle(color: Colors.white, fontSize: 48, fontWeight: FontWeight.bold),
-                ),
-                _DialogAdjustButton(label: '+', onTap: () => _adjust(1)),
-              ],
-            ),
-            const SizedBox(height: 20),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                GestureDetector(
-                  onTap: () {
-                    _adjust(-_value); // bring value back to 0
-                    Navigator.pop(context);
-                  },
-                  child: Text(
-                    'Reset',
-                    style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 13),
+    return Transform.rotate(
+      angle: widget.quarterTurns * pi / 2,
+      child: Dialog(
+        backgroundColor: const Color(0xFF2A2A2A),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                '${widget.tracker.icon}  ${widget.tracker.name}',
+                style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 24),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  _DialogAdjustButton(label: '−', onTap: () => _adjust(-1)),
+                  Text(
+                    '$_value',
+                    style: const TextStyle(color: Colors.white, fontSize: 48, fontWeight: FontWeight.bold),
                   ),
-                ),
-                GestureDetector(
-                  onTap: () {
-                    Navigator.pop(context);
-                    widget.onRemove();
-                  },
-                  child: Text(
-                    'Remove',
-                    style: TextStyle(color: Colors.red.withValues(alpha: 0.6), fontSize: 13),
+                  _DialogAdjustButton(label: '+', onTap: () => _adjust(1)),
+                ],
+              ),
+              const SizedBox(height: 20),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  GestureDetector(
+                    onTap: () {
+                      _adjust(-_value);
+                      Navigator.pop(context);
+                    },
+                    child: Text(
+                      'Reset',
+                      style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 13),
+                    ),
                   ),
-                ),
-              ],
-            ),
-          ],
+                  GestureDetector(
+                    onTap: () {
+                      Navigator.pop(context);
+                      widget.onRemove();
+                    },
+                    child: Text(
+                      'Remove',
+                      style: TextStyle(color: Colors.red.withValues(alpha: 0.6), fontSize: 13),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -301,15 +421,25 @@ class _DialogAdjustButton extends StatelessWidget {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Life total area
+// ---------------------------------------------------------------------------
+
 // Life total display with invisible tap areas on each half.
 // Left half: decrement. Right half: increment.
 // Tap: ±1. Hold: repeats ±10 every 500 ms.
 // Shows a cumulative delta indicator that clears 5 s after the last change.
+// onSwipe: if set, a fast horizontal drag opens the commander damage view.
 class _LifeTotalArea extends StatefulWidget {
   final int lifeTotal;
   final void Function(int delta) onLifeChange;
+  final VoidCallback? onSwipe;
 
-  const _LifeTotalArea({required this.lifeTotal, required this.onLifeChange});
+  const _LifeTotalArea({
+    required this.lifeTotal,
+    required this.onLifeChange,
+    this.onSwipe,
+  });
 
   @override
   State<_LifeTotalArea> createState() => _LifeTotalAreaState();
@@ -319,8 +449,6 @@ class _LifeTotalAreaState extends State<_LifeTotalArea> {
   int _pendingDelta = 0;
   Timer? _clearTimer;
 
-  // Intercepts each life change: forwards it to the parent callback,
-  // accumulates it into the display delta, and resets the 5 s clear timer.
   void _handleLifeChange(int delta) {
     widget.onLifeChange(delta);
     setState(() => _pendingDelta += delta);
@@ -338,7 +466,7 @@ class _LifeTotalAreaState extends State<_LifeTotalArea> {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
+    final content = Padding(
       padding: const EdgeInsets.fromLTRB(4, 4, 4, 4),
       child: SizedBox(
         height: 160,
@@ -365,8 +493,7 @@ class _LifeTotalAreaState extends State<_LifeTotalArea> {
                 ),
               ),
             ),
-            // Delta indicator — anchored to the bottom of the Stack so it
-            // appears and disappears without affecting the life total position
+            // Delta indicator — anchored to the bottom of the Stack
             if (_pendingDelta != 0)
               Positioned(
                 bottom: 0,
@@ -384,8 +511,243 @@ class _LifeTotalAreaState extends State<_LifeTotalArea> {
         ),
       ),
     );
+
+    if (widget.onSwipe == null) return content;
+
+    return GestureDetector(
+      // A fast horizontal drag opens the commander damage view.
+      // _HoldButton only handles taps and long-presses, so no conflict.
+      onHorizontalDragEnd: (details) {
+        if ((details.primaryVelocity ?? 0).abs() > 300) {
+          widget.onSwipe!();
+        }
+      },
+      child: content,
+    );
   }
 }
+
+// ---------------------------------------------------------------------------
+// Commander damage view
+// ---------------------------------------------------------------------------
+
+// Replaces the life total area when the player swipes the card.
+// Mirrors the board layout: each player occupies the same grid slot as on the
+// main screen. The self slot shows an Ok/close cell; opponent slots show a
+// compact damage tracker (tap ±1, hold ±10).
+class _CommanderDamageView extends StatelessWidget {
+  final Player self;
+  final List<Player> allPlayers;
+  final void Function(String attackerId, int delta) onDamageChange;
+  final VoidCallback onClose;
+
+  const _CommanderDamageView({
+    super.key,
+    required this.self,
+    required this.allPlayers,
+    required this.onDamageChange,
+    required this.onClose,
+  });
+
+  Widget _buildSlot(Player opponent) {
+    final isSelf = opponent.id == self.id;
+    return Padding(
+      padding: const EdgeInsets.all(4),
+      child: isSelf
+          ? _CmdOkCell(
+              color: self.color,
+              quarterTurns: self.quarterTurns,
+              onClose: onClose,
+            )
+          : _CmdDamageCell(
+              opponent: opponent,
+              invoker: self,
+              onChange: (delta) => onDamageChange(opponent.id, delta),
+            ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final topEdge    = allPlayers.where((p) => p.seatPosition == SeatPosition.topEdge).toList();
+    final bottomEdge = allPlayers.where((p) => p.seatPosition == SeatPosition.bottomEdge).toList();
+    final leftSide   = allPlayers.where((p) => p.seatPosition == SeatPosition.leftSide).toList();
+    final rightSide  = allPlayers.where((p) => p.seatPosition == SeatPosition.rightSide).toList();
+
+    return Column(
+      children: [
+        if (topEdge.isNotEmpty)
+          Expanded(
+            flex: 1,
+            child: _buildSlot(topEdge.first),
+          ),
+        if (leftSide.isNotEmpty || rightSide.isNotEmpty)
+          Expanded(
+            flex: leftSide.length + rightSide.length,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (leftSide.isNotEmpty)
+                  Expanded(
+                    child: Column(
+                      children: leftSide.map((p) => Expanded(child: _buildSlot(p))).toList(),
+                    ),
+                  ),
+                if (rightSide.isNotEmpty)
+                  Expanded(
+                    child: Column(
+                      children: rightSide.map((p) => Expanded(child: _buildSlot(p))).toList(),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        if (bottomEdge.isNotEmpty)
+          Expanded(
+            flex: 1,
+            child: _buildSlot(bottomEdge.first),
+          ),
+      ],
+    );
+  }
+}
+
+// The self slot in the commander damage grid — tapping it closes the view.
+class _CmdOkCell extends StatelessWidget {
+  final Color color;
+  final int quarterTurns;
+  final VoidCallback onClose;
+
+  const _CmdOkCell({
+    required this.color,
+    required this.quarterTurns,
+    required this.onClose,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return RotatedBox(
+      quarterTurns: quarterTurns,
+      child: GestureDetector(
+        onTap: onClose,
+        child: Container(
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.25),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: color.withValues(alpha: 0.6), width: 1.5),
+          ),
+          child: Center(
+            child: Icon(
+              Icons.check_rounded,
+              color: color.withValues(alpha: 0.9),
+              size: 24,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// An opponent slot in the commander damage grid.
+// Tap: ±1, hold: ±10. Shows current damage + pending delta.
+class _CmdDamageCell extends StatefulWidget {
+  final Player opponent;
+  // The player who opened this damage view — provides quarterTurns for text
+  // rotation and the live commanderDamage map for clamping negatives.
+  final Player invoker;
+  final void Function(int delta) onChange;
+
+  const _CmdDamageCell({
+    required this.opponent,
+    required this.invoker,
+    required this.onChange,
+  });
+
+  @override
+  State<_CmdDamageCell> createState() => _CmdDamageCellState();
+}
+
+class _CmdDamageCellState extends State<_CmdDamageCell> {
+  int _pendingDelta = 0;
+  Timer? _clearTimer;
+
+  void _handleChange(int delta) {
+    final current = widget.invoker.commanderDamage[widget.opponent.id] ?? 0;
+    // Commander damage cannot go below 0.
+    final clamped = max(delta, -current);
+    if (clamped == 0) return;
+    widget.onChange(clamped);
+    setState(() => _pendingDelta += clamped);
+    _clearTimer?.cancel();
+    _clearTimer = Timer(const Duration(seconds: 5), () {
+      setState(() => _pendingDelta = 0);
+    });
+  }
+
+  @override
+  void dispose() {
+    _clearTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final color = widget.opponent.color;
+    final damage = widget.invoker.commanderDamage[widget.opponent.id] ?? 0;
+    return Container(
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.4), width: 1.5),
+      ),
+      child: RotatedBox(
+        quarterTurns: widget.invoker.quarterTurns,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(child: _HoldButton(tapDelta: -1, holdDelta: -10, onActivate: _handleChange)),
+                Expanded(child: _HoldButton(tapDelta: 1,  holdDelta: 10,  onActivate: _handleChange)),
+              ],
+            ),
+            IgnorePointer(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    '$damage',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 28,
+                      fontWeight: FontWeight.bold,
+                      height: 1,
+                    ),
+                  ),
+                  if (_pendingDelta != 0)
+                    Text(
+                      _pendingDelta > 0 ? '+$_pendingDelta' : '$_pendingDelta',
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.55),
+                        fontSize: 12,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Shared hold-button widget
+// ---------------------------------------------------------------------------
 
 // A transparent pressable area with independent hold-repeat logic.
 // Each instance owns its own Timer so simultaneous presses can't interfere.

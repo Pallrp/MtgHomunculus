@@ -72,3 +72,6 @@ lib/generated_plugin_registrant.dart
 
 # JetBrains / Android Studio
 .idea/
+
+# Claude
+.claude/

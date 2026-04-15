@@ -17,18 +17,26 @@ class GameState {
   final int startingLife;
   final int activePlayerIndex;
   final bool gameStarted;
+  final bool choosingStarter;
 
   const GameState({
     required this.players,
     this.startingLife = 40,
     this.activePlayerIndex = 0,
     this.gameStarted = false,
+    this.choosingStarter = false,
   });
 
-  // The state the app opens with: one player, 40 starting life
+  // The state the app opens with: one player, not yet started.
+  // bottomEdge = no rotation, card faces up — correct for a solo user
+  // holding the phone normally.
   factory GameState.initial() => GameState(
         players: [
-          Player.create(color: kPlayerColors[0], startingLife: 40),
+          Player.create(
+            color: kPlayerColors[0],
+            startingLife: 40,
+            seatPosition: SeatPosition.bottomEdge,
+          ),
         ],
       );
 
@@ -37,60 +45,82 @@ class GameState {
     int? startingLife,
     int? activePlayerIndex,
     bool? gameStarted,
+    bool? choosingStarter,
   }) =>
       GameState(
         players: players ?? this.players,
         startingLife: startingLife ?? this.startingLife,
         activePlayerIndex: activePlayerIndex ?? this.activePlayerIndex,
         gameStarted: gameStarted ?? this.gameStarted,
+        choosingStarter: choosingStarter ?? this.choosingStarter,
       );
 
-  // Advance to next player; reset all non-permanent trackers on every player
-  GameState passTurn() {
-    final nextIndex = (activePlayerIndex + 1) % players.length;
+  // ---------------------------------------------------------------------------
+  // Player management
+  // ---------------------------------------------------------------------------
+
+  // Add a new player. Assigns the next available color, updates all
+  // commanderDamage maps to include the new player (and vice versa).
+  GameState addPlayer(SeatPosition seatPosition) {
+    assert(players.length < 6, 'Cannot have more than 6 players');
+    final color = kPlayerColors[players.length];
+    final newPlayer = Player.create(
+      color: color,
+      startingLife: startingLife,
+      seatPosition: seatPosition,
+      // Initialise damage from every existing player to 0
+      commanderDamage: {for (final p in players) p.id: 0},
+    );
+    // Add the new player's id to every existing player's commanderDamage map
     final updated = players
         .map((p) => p.copyWith(
-              trackers: p.trackers
-                  .map((t) => t.permanent ? t : t.reset())
-                  .toList(),
+              commanderDamage: {...p.commanderDamage, newPlayer.id: 0},
             ))
         .toList();
-    return copyWith(players: updated, activePlayerIndex: nextIndex);
+    return copyWith(players: [...updated, newPlayer]);
   }
 
-  // Add a tracker to a player's tracker list
-  GameState addTrackerToPlayer(int playerIndex, Tracker tracker) {
+  // Remove a player by id. Cleans up commanderDamage entries in all other players.
+  // Adjusts activePlayerIndex if needed.
+  GameState removePlayer(String playerId) {
+    assert(players.length > 1, 'Cannot remove the last player');
+    final updated = players
+        .where((p) => p.id != playerId)
+        .map((p) {
+          final newDamage = Map<String, int>.from(p.commanderDamage)
+            ..remove(playerId);
+          return p.copyWith(commanderDamage: newDamage);
+        })
+        .toList();
+    final removedIndex = players.indexWhere((p) => p.id == playerId);
+    final newActiveIndex = activePlayerIndex >= updated.length
+        ? updated.length - 1
+        : (removedIndex <= activePlayerIndex && activePlayerIndex > 0)
+            ? activePlayerIndex - 1
+            : activePlayerIndex;
+    return copyWith(players: updated, activePlayerIndex: newActiveIndex);
+  }
+
+  // Update the seat position of a player.
+  GameState updatePlayerSeat(String playerId, SeatPosition seatPosition) {
+    final updated = players
+        .map((p) => p.id == playerId ? p.copyWith(seatPosition: seatPosition) : p)
+        .toList();
+    return copyWith(players: updated);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Life & tracker changes
+  // ---------------------------------------------------------------------------
+
+  GameState updatePlayerLife(int playerIndex, int delta) {
     final updated = List<Player>.from(players);
-    final player = players[playerIndex];
-    updated[playerIndex] = player.copyWith(
-      trackers: [...player.trackers, tracker],
+    updated[playerIndex] = players[playerIndex].copyWith(
+      lifeTotal: players[playerIndex].lifeTotal + delta,
     );
     return copyWith(players: updated);
   }
 
-  // Remove a tracker from a player's tracker list by id
-  GameState removeTrackerFromPlayer(int playerIndex, String trackerId) {
-    final updated = List<Player>.from(players);
-    final player = players[playerIndex];
-    updated[playerIndex] = player.copyWith(
-      trackers: player.trackers.where((t) => t.id != trackerId).toList(),
-    );
-    return copyWith(players: updated);
-  }
-
-  // Reorder a player's trackers. oldIndex and newIndex are already adjusted
-  // (Flutter's ReorderableListView adjustment is done before calling this).
-  GameState reorderPlayerTrackers(int playerIndex, int oldIndex, int newIndex) {
-    final updated = List<Player>.from(players);
-    final player = players[playerIndex];
-    final trackers = List<Tracker>.from(player.trackers);
-    final item = trackers.removeAt(oldIndex);
-    trackers.insert(newIndex, item);
-    updated[playerIndex] = player.copyWith(trackers: trackers);
-    return copyWith(players: updated);
-  }
-
-  // Adjust one tracker's value by delta for the given player
   GameState updateTrackerValue(int playerIndex, String trackerId, int delta) {
     final player = players[playerIndex];
     final updatedTrackers = player.trackers
@@ -101,26 +131,136 @@ class GameState {
     return copyWith(players: updated);
   }
 
-  // Adjust one player's life total by delta (positive or negative)
-  GameState updatePlayerLife(int playerIndex, int delta) {
+  // ---------------------------------------------------------------------------
+  // Commander damage
+  // ---------------------------------------------------------------------------
+
+  // Adjust commander damage received by [defenderId] from [attackerId].
+  // Also adjusts the defender's life total by the same delta.
+  GameState updateCommanderDamage(String defenderId, String attackerId, int delta) {
+    final updated = players.map((p) {
+      if (p.id == defenderId) {
+        final newDamage = Map<String, int>.from(p.commanderDamage);
+        newDamage[attackerId] = (newDamage[attackerId] ?? 0) + delta;
+        return p.copyWith(
+          commanderDamage: newDamage,
+          lifeTotal: p.lifeTotal - delta,
+        );
+      }
+      return p;
+    }).toList();
+    return copyWith(players: updated);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Tracker list management
+  // ---------------------------------------------------------------------------
+
+  GameState addTrackerToPlayer(int playerIndex, Tracker tracker) {
     final updated = List<Player>.from(players);
-    updated[playerIndex] = players[playerIndex].copyWith(
-      lifeTotal: players[playerIndex].lifeTotal + delta,
+    final player = players[playerIndex];
+    updated[playerIndex] = player.copyWith(
+      trackers: [...player.trackers, tracker],
     );
     return copyWith(players: updated);
   }
 
-  // Keep the same players and colors but reset life totals and non-permanent trackers
-  GameState resetGame() => GameState(
-        players: players
-            .map((p) => p.copyWith(
-                  lifeTotal: startingLife,
-                  trackers: p.trackers
-                      .where((t) => t.permanent)
-                      .map((t) => t.reset())
-                      .toList(),
-                ))
-            .toList(),
-        startingLife: startingLife,
-      );
+  GameState removeTrackerFromPlayer(int playerIndex, String trackerId) {
+    final updated = List<Player>.from(players);
+    final player = players[playerIndex];
+    updated[playerIndex] = player.copyWith(
+      trackers: player.trackers.where((t) => t.id != trackerId).toList(),
+    );
+    return copyWith(players: updated);
+  }
+
+  GameState reorderPlayerTrackers(int playerIndex, int oldIndex, int newIndex) {
+    final updated = List<Player>.from(players);
+    final player = players[playerIndex];
+    final trackers = List<Tracker>.from(player.trackers);
+    final item = trackers.removeAt(oldIndex);
+    trackers.insert(newIndex, item);
+    updated[playerIndex] = player.copyWith(trackers: trackers);
+    return copyWith(players: updated);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Turn & game flow
+  // ---------------------------------------------------------------------------
+
+  // Player indices ordered clockwise around the table:
+  // top edge → right side (top→bottom) → bottom edge → left side (bottom→top).
+  List<int> get _clockwiseOrder {
+    List<int> byPos(SeatPosition pos) => players
+        .asMap()
+        .entries
+        .where((e) => e.value.seatPosition == pos)
+        .map((e) => e.key)
+        .toList();
+    return [
+      ...byPos(SeatPosition.topEdge),
+      ...byPos(SeatPosition.rightSide),
+      ...byPos(SeatPosition.bottomEdge),
+      ...byPos(SeatPosition.leftSide).reversed,
+    ];
+  }
+
+  // Advance to next player in clockwise order; reset all non-permanent trackers.
+  GameState passTurn() {
+    final order = _clockwiseOrder;
+    final pos   = order.indexOf(activePlayerIndex);
+    final nextIndex = order[(pos + 1) % order.length];
+    final updated = players
+        .map((p) => p.copyWith(
+              trackers: p.trackers
+                  .map((t) => t.permanent ? t : t.reset())
+                  .toList(),
+            ))
+        .toList();
+    return copyWith(players: updated, activePlayerIndex: nextIndex);
+  }
+
+  // Set the active player directly (used by WHO'S STARTING? selection).
+  GameState setActivePlayer(int index) =>
+      copyWith(activePlayerIndex: index, choosingStarter: false, gameStarted: true);
+
+  // Apply new player list and starting life from Setup draft, then trigger
+  // WHO'S STARTING? overlay.
+  GameState applySetup({
+    required List<Player> newPlayers,
+    required int newStartingLife,
+  }) {
+    final solo = newPlayers.length == 1;
+    // Guarantee no rotation for a solo player regardless of their prior seat.
+    final resolved = solo
+        ? [newPlayers[0].copyWith(seatPosition: SeatPosition.bottomEdge)]
+        : newPlayers;
+    return GameState(
+      players: resolved.map((p) => p.copyWith(lifeTotal: newStartingLife)).toList(),
+      startingLife: newStartingLife,
+      activePlayerIndex: 0,
+      gameStarted: solo,
+      choosingStarter: !solo,
+    );
+  }
+
+  // Keep the same players and colors but reset life totals and non-permanent trackers.
+  GameState resetGame() {
+    final solo = players.length == 1;
+    return GameState(
+      players: players
+          .map((p) => p.copyWith(
+                lifeTotal: startingLife,
+                trackers: p.trackers
+                    .where((t) => t.permanent)
+                    .map((t) => t.reset())
+                    .toList(),
+                commanderDamage: {for (final id in p.commanderDamage.keys) id: 0},
+              ))
+          .toList(),
+      startingLife: startingLife,
+      gameStarted: solo,
+      choosingStarter: !solo,
+    );
+  }
 }
