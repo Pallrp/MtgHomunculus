@@ -1,5 +1,6 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
+import '../../../app_theme.dart';
 import '../models/tracker.dart';
 import '../models/default_trackers.dart';
 
@@ -107,8 +108,8 @@ class _ManageTrackersDialogState extends State<ManageTrackersDialog> {
     return Transform.rotate(
       angle: angle,
       child: Dialog(
-        backgroundColor: const Color(0xFF2A2A2A),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        backgroundColor: AppTheme.dialogBg,
+        shape: AppTheme.dialogShape,
         child: SizedBox(
           width: 320,
           child: AnimatedSize(

@@ -35,6 +35,8 @@ class Player {
   int get quarterTurns => quarterTurnsForSeat(seatPosition);
 
   // Generates a unique id from the current timestamp.
+  static int _idSeq = 0;
+
   factory Player.create({
     required Color color,
     required int startingLife,
@@ -42,7 +44,7 @@ class Player {
     Map<String, int> commanderDamage = const {},
   }) {
     return Player(
-      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      id: '${DateTime.now().microsecondsSinceEpoch}_${_idSeq++}',
       color: color,
       lifeTotal: startingLife,
       seatPosition: seatPosition,

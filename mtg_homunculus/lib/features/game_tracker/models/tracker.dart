@@ -29,4 +29,22 @@ class Tracker {
       );
 
   Tracker reset() => copyWith(value: 0);
+
+  // id is included (unlike copyWith) so a serialised preset can be matched
+  // against gt.seededTrackerIds across sessions.
+  Map<String, dynamic> toJson() => {
+    'id':        id,
+    'icon':      icon,
+    'name':      name,
+    'value':     value,
+    'permanent': permanent,
+  };
+
+  factory Tracker.fromJson(Map<String, dynamic> json) => Tracker(
+    id:        json['id']        as String,
+    icon:      json['icon']      as String,
+    name:      json['name']      as String,
+    value:     json['value']     as int? ?? 0,
+    permanent: json['permanent'] as bool? ?? false,
+  );
 }

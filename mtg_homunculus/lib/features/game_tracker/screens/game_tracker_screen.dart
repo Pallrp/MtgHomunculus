@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
+import '../../../app_theme.dart';
 import '../models/game_state.dart';
 import '../models/player.dart';
 import '../widgets/game_grid.dart';
+import '../widgets/gt_settings_scope.dart';
 import '../widgets/setup_sheet.dart';
 import '../widgets/pass_diamond.dart';
 
 class GameTrackerScreen extends StatefulWidget {
-  const GameTrackerScreen({super.key});
+  final GtSettings settings;
+  const GameTrackerScreen({super.key, this.settings = const GtSettings()});
 
   @override
   State<GameTrackerScreen> createState() => _GameTrackerScreenState();
@@ -23,32 +26,35 @@ class _GameTrackerScreenState extends State<GameTrackerScreen> {
   // Game state mutations
   // ---------------------------------------------------------------------------
 
+  int _playerIndex(String playerId) =>
+      _game.players.indexWhere((p) => p.id == playerId);
+
   void _onLifeChange(String playerId, int delta) {
-    final index = _game.players.indexWhere((p) => p.id == playerId);
+    final index = _playerIndex(playerId);
     if (index == -1) return;
     setState(() => _game = _game.updatePlayerLife(index, delta));
   }
 
   void _onTrackerChange(String playerId, String trackerId, int delta) {
-    final index = _game.players.indexWhere((p) => p.id == playerId);
+    final index = _playerIndex(playerId);
     if (index == -1) return;
     setState(() => _game = _game.updateTrackerValue(index, trackerId, delta));
   }
 
   void _onTrackerAdd(String playerId, tracker) {
-    final index = _game.players.indexWhere((p) => p.id == playerId);
+    final index = _playerIndex(playerId);
     if (index == -1) return;
     setState(() => _game = _game.addTrackerToPlayer(index, tracker));
   }
 
   void _onTrackerRemove(String playerId, String trackerId) {
-    final index = _game.players.indexWhere((p) => p.id == playerId);
+    final index = _playerIndex(playerId);
     if (index == -1) return;
     setState(() => _game = _game.removeTrackerFromPlayer(index, trackerId));
   }
 
   void _onTrackerReorder(String playerId, int oldIndex, int newIndex) {
-    final index = _game.players.indexWhere((p) => p.id == playerId);
+    final index = _playerIndex(playerId);
     if (index == -1) return;
     setState(() => _game = _game.reorderPlayerTrackers(index, oldIndex, newIndex));
   }
@@ -80,7 +86,7 @@ class _GameTrackerScreenState extends State<GameTrackerScreen> {
   }
 
   void _onPlayerTap(String playerId) {
-    final index = _game.players.indexWhere((p) => p.id == playerId);
+    final index = _playerIndex(playerId);
     if (index == -1) return;
     setState(() => _game = _game.setActivePlayer(index));
   }
@@ -95,13 +101,15 @@ class _GameTrackerScreenState extends State<GameTrackerScreen> {
     // Diamond is hidden for solo — no turn order or GAMBA needed.
     final showDiamond = !isSinglePlayer && (_game.gameStarted || _game.choosingStarter);
 
-    return Scaffold(
-      backgroundColor: const Color(0xFF1A1A1A),
+    return GtSettingsScope(
+      settings: widget.settings,
+      child: Scaffold(
+        backgroundColor: AppTheme.scaffoldBg,
       // Prevent the body from shrinking when the keyboard appears.
       // The SetupSheet strip would otherwise float upward and overlap cards.
       resizeToAvoidBottomInset: false,
       appBar: AppBar(
-        backgroundColor: const Color(0xFF242424),
+        backgroundColor: AppTheme.appBarBg,
         title: const Text(
           'MtgHomunculus',
           style: TextStyle(color: Colors.white, fontSize: 18),
@@ -171,11 +179,12 @@ class _GameTrackerScreenState extends State<GameTrackerScreen> {
           ),
         ],
       ),
-    );
+    ),   // Scaffold
+    ); // GtSettingsScope
   }
 
   Widget _diamond() => PassDiamond(
-        playerCount: _game.players.length,
+        playerOrder: _game.clockwiseOrder,
         choosingStarter: _game.choosingStarter,
         onPass: _onPass,
         onGamba: _onGamba,

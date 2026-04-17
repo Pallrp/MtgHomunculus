@@ -14,7 +14,9 @@ import 'package:flutter/material.dart';
 // pick; the widget owns only the animation.
 
 class PassDiamond extends StatefulWidget {
-  final int playerCount;
+  // Player indices in clockwise board order — drives both the roulette sweep
+  // and the Pass label logic.
+  final List<int> playerOrder;
   final bool choosingStarter;
   // Called when tapped in normal mode (single player = reset, multi = pass).
   final VoidCallback onPass;
@@ -26,7 +28,7 @@ class PassDiamond extends StatefulWidget {
 
   const PassDiamond({
     super.key,
-    required this.playerCount,
+    required this.playerOrder,
     required this.onPass,
     required this.onGamba,
     this.choosingStarter = false,
@@ -77,25 +79,27 @@ class _PassDiamondState extends State<PassDiamond>
     if (_animating) return;
     setState(() => _animating = true);
 
+    final order = widget.playerOrder;
+    final n = order.length;
     final random = Random();
-    final pick = random.nextInt(widget.playerCount);
-    // Total steps: a few full cycles plus landing on pick
-    final totalCycles = 2 + random.nextInt(2); // 2-3 full loops
-    final totalSteps = totalCycles * widget.playerCount + pick;
+    final pickSlot = random.nextInt(n); // index into order, not a player index
+    // Total steps: a few full cycles plus landing exactly on pickSlot.
+    // +1 so the last tick highlights the winner before onGamba fires.
+    final totalCycles = 3 + random.nextInt(2); // 3–4 full loops
+    final totalSteps = totalCycles * n + pickSlot + 1;
 
     int step = 0;
-    // Start fast, decelerate toward the end
+    // Sweep clockwise through order; decelerate over the last 40% of steps.
     void tick() {
       if (!mounted) return;
-      widget.onGambaHighlight?.call(step % widget.playerCount);
+      widget.onGambaHighlight?.call(order[step % n]);
       step++;
       if (step >= totalSteps) {
         _timer?.cancel();
         setState(() => _animating = false);
-        widget.onGamba(pick);
+        widget.onGamba(order[pickSlot]);
         return;
       }
-      // Ease: interval grows from 80ms → 500ms over the last 40% of steps
       final progress = step / totalSteps;
       final intervalMs = progress < 0.6
           ? 80
@@ -103,13 +107,13 @@ class _PassDiamondState extends State<PassDiamond>
       _timer = Timer(Duration(milliseconds: intervalMs), tick);
     }
 
-    _timer = Timer(const Duration(milliseconds: 80), tick);
+    _timer = Timer(const Duration(milliseconds: 100), tick);
   }
 
   String get _label {
     if (_animating) return '';
     if (widget.choosingStarter) return 'GAMBA';
-    return widget.playerCount == 1 ? 'Reset' : 'Pass';
+    return widget.playerOrder.length == 1 ? 'Reset' : 'Pass';
   }
 
   @override

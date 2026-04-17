@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import '../models/game_state.dart';
 import '../models/player.dart';
+import '../models/players_by_position.dart';
 import '../models/tracker.dart';
 import 'player_card.dart';
+import 'player_grid_layout.dart';
 
 // Callbacks for all PlayerCard interactions, keyed by player id.
 typedef OnLifeChange      = void Function(String playerId, int delta);
@@ -53,55 +55,13 @@ class GameGrid extends StatelessWidget {
       );
     }
 
-    final topEdge    = players.where((p) => p.seatPosition == SeatPosition.topEdge).toList();
-    final bottomEdge = players.where((p) => p.seatPosition == SeatPosition.bottomEdge).toList();
-    final leftSide   = players.where((p) => p.seatPosition == SeatPosition.leftSide).toList();
-    final rightSide  = players.where((p) => p.seatPosition == SeatPosition.rightSide).toList();
-
-    return Column(
-      children: [
-        // Top short-edge player (full width)
-        if (topEdge.isNotEmpty)
-          Expanded(
-            flex: 1,
-            child: _buildCard(topEdge.first),
-          ),
-
-        // Main two-column area — columns are always equal width so the layout
-        // stays centred under the diamond regardless of player counts per side.
-        if (leftSide.isNotEmpty || rightSide.isNotEmpty)
-          Expanded(
-            flex: leftSide.length + rightSide.length,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                if (leftSide.isNotEmpty)
-                  Expanded(
-                    child: Column(
-                      children: leftSide
-                          .map((p) => Expanded(child: _buildCard(p)))
-                          .toList(),
-                    ),
-                  ),
-                if (rightSide.isNotEmpty)
-                  Expanded(
-                    child: Column(
-                      children: rightSide
-                          .map((p) => Expanded(child: _buildCard(p)))
-                          .toList(),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-
-        // Bottom short-edge player (full width)
-        if (bottomEdge.isNotEmpty)
-          Expanded(
-            flex: 1,
-            child: _buildCard(bottomEdge.first),
-          ),
-      ],
+    // edgeFlex: 3, sideFlex: 2 preserves the original 1.5× height ratio between
+    // short-edge rows and individual side slots (3 vs sideCount×2).
+    return PlayerGridLayout<Player>(
+      positions: PlayersByPosition.from(players, (p) => p.seatPosition),
+      edgeFlex: 3,
+      sideFlex: 2,
+      slotBuilder: _buildCard,
     );
   }
 
@@ -130,15 +90,19 @@ class GameGrid extends StatelessWidget {
       ),
     );
 
-    // During WHO'S STARTING, wrap with a tap detector and pulse highlight.
-    // During GAMBA animation, flash the currently spinning card instead.
+    // During WHO'S STARTING, wrap with a tap detector and a border effect:
+    //   • no animation yet  → all cards pulse (player is deciding)
+    //   • animation running → only the current highlight flashes; others plain
     if (choosingStarter && onPlayerTap != null) {
-      final isGambaFlash = gambaHighlightIndex == index;
+      final isGambaActive = gambaHighlightIndex != -1;
+      final isGambaFlash  = gambaHighlightIndex == index;
       card = GestureDetector(
         onTap: () => onPlayerTap!(player.id),
         child: isGambaFlash
             ? _FlashBorder(color: player.color, child: card)
-            : _PulsingBorder(color: player.color, child: card),
+            : isGambaActive
+                ? card
+                : _PulsingBorder(color: player.color, child: card),
       );
     }
 

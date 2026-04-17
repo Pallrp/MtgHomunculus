@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../models/game_state.dart';
 import '../models/player.dart';
+import '../models/players_by_position.dart';
+import 'player_grid_layout.dart';
 
 // Height of the always-visible collapsed handle strip.
 const double kSetupStripHeight = 44.0;
@@ -94,13 +96,12 @@ class _SetupSheetState extends State<SetupSheet> {
       } else {
         // Odd → even: promote existing bottomEdge player to a side column,
         // then add new player to the other side.
+        final pos = PlayersByPosition.from(_draftPlayers, (p) => p.seatPosition);
         final edgeIndex = _draftPlayers
             .indexWhere((p) => p.seatPosition == SeatPosition.bottomEdge);
         if (edgeIndex != -1) {
           // Determine which side has fewer players
-          final leftCount  = _draftPlayers.where((p) => p.seatPosition == SeatPosition.leftSide).length;
-          final rightCount = _draftPlayers.where((p) => p.seatPosition == SeatPosition.rightSide).length;
-          final promoteToSide = leftCount <= rightCount
+          final promoteToSide = pos.leftSide.length <= pos.rightSide.length
               ? SeatPosition.leftSide
               : SeatPosition.rightSide;
           final newSide = promoteToSide == SeatPosition.leftSide
@@ -114,12 +115,10 @@ class _SetupSheetState extends State<SetupSheet> {
           ));
         } else {
           // No edge player found — just add to the shorter side
-          final leftCount  = _draftPlayers.where((p) => p.seatPosition == SeatPosition.leftSide).length;
-          final rightCount = _draftPlayers.where((p) => p.seatPosition == SeatPosition.rightSide).length;
           _draftPlayers.add(_DraftPlayer(
             id: _newId(),
             color: color,
-            seatPosition: leftCount <= rightCount
+            seatPosition: pos.leftSide.length <= pos.rightSide.length
                 ? SeatPosition.leftSide
                 : SeatPosition.rightSide,
           ));
@@ -157,21 +156,12 @@ class _SetupSheetState extends State<SetupSheet> {
 
   void _onNewGame() {
     final life = int.tryParse(_lifeController.text) ?? _draftStartingLife;
-    // Build Player objects from the draft, preserving existing player data
-    // (trackers, commanderDamage) where the id matches.
-    final existingById = {for (final p in widget.game.players) p.id: p};
-    final newPlayers = _draftPlayers.map((d) {
-      final existing = existingById[d.id];
-      if (existing != null) {
-        return existing.copyWith(seatPosition: d.seatPosition);
-      }
-      // New player — create fresh, commanderDamage will be handled by applySetup
-      return Player.create(
-        color: d.color,
-        startingLife: life,
-        seatPosition: d.seatPosition,
-      );
-    }).toList();
+    // Always create fresh players — no state carried over from the previous game.
+    final newPlayers = _draftPlayers.map((d) => Player.create(
+      color: d.color,
+      startingLife: life,
+      seatPosition: d.seatPosition,
+    )).toList();
     widget.onNewGame(newPlayers: newPlayers, newStartingLife: life);
     // Collapse the sheet — the game is starting
     _sheetController.animateTo(
@@ -488,18 +478,10 @@ class _LayoutPreview extends StatefulWidget {
 class _LayoutPreviewState extends State<_LayoutPreview> {
   bool _isDragging = false;
 
-  bool _isEdgePlayer(_DraftPlayer p) =>
-      p.seatPosition == SeatPosition.topEdge ||
-      p.seatPosition == SeatPosition.bottomEdge;
-
   @override
   Widget build(BuildContext context) {
-    final topEdge    = widget.players.where((p) => p.seatPosition == SeatPosition.topEdge).toList();
-    final bottomEdge = widget.players.where((p) => p.seatPosition == SeatPosition.bottomEdge).toList();
-    final leftSide   = widget.players.where((p) => p.seatPosition == SeatPosition.leftSide).toList();
-    final rightSide  = widget.players.where((p) => p.seatPosition == SeatPosition.rightSide).toList();
-    final sideCount  = leftSide.length + rightSide.length;
-    final canRemove  = widget.players.length > 1;
+    final pos       = PlayersByPosition.from(widget.players, (p) => p.seatPosition);
+    final canRemove = widget.players.length > 1;
 
     return Container(
       height: 280,
@@ -515,49 +497,16 @@ class _LayoutPreviewState extends State<_LayoutPreview> {
           child: Stack(
             children: [
               // Grid — mirrors the GameGrid layout
-              Column(
-                children: [
-                  if (topEdge.isNotEmpty)
-                    Expanded(
-                      flex: 1,
-                      child: _buildCard(topEdge.first, canRemove),
-                    ),
-                  if (sideCount > 0)
-                    Expanded(
-                      flex: sideCount,
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          if (leftSide.isNotEmpty)
-                            Expanded(
-                              child: Column(
-                                children: leftSide
-                                    .map((p) => Expanded(child: _buildCard(p, canRemove)))
-                                    .toList(),
-                              ),
-                            ),
-                          if (rightSide.isNotEmpty)
-                            Expanded(
-                              child: Column(
-                                children: rightSide
-                                    .map((p) => Expanded(child: _buildCard(p, canRemove)))
-                                    .toList(),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  if (bottomEdge.isNotEmpty)
-                    Expanded(
-                      flex: 1,
-                      child: _buildCard(bottomEdge.first, canRemove),
-                    ),
-                ],
+              PlayerGridLayout<_DraftPlayer>(
+                positions: pos,
+                edgeFlex: 2,
+                sideFlex: 1,
+                slotBuilder: (p) => _buildCard(p, canRemove),
               ),
               // Drop zone overlay — only visible while dragging an edge card
               if (_isDragging)
                 Positioned.fill(
-                  child: _buildDropOverlay(sideCount),
+                  child: _buildDropOverlay(pos.sideCount),
                 ),
             ],
           ),
@@ -591,10 +540,6 @@ class _LayoutPreviewState extends State<_LayoutPreview> {
       ),
     );
 
-    // Side players are not repositionable — return the card as-is.
-    if (!_isEdgePlayer(player)) return card;
-
-    // Short-edge players can be long-press dragged to a new seat position.
     return LongPressDraggable<String>(
       data: player.id,
       delay: const Duration(milliseconds: 200),

@@ -1,9 +1,13 @@
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
+import '../../../app_theme.dart';
 import '../models/player.dart';
+import '../models/players_by_position.dart';
 import '../models/tracker.dart';
+import 'gt_settings_scope.dart';
 import 'manage_trackers_dialog.dart';
+import 'player_grid_layout.dart';
 
 class PlayerCard extends StatefulWidget {
   final Player player;
@@ -336,8 +340,8 @@ class _TrackerEditDialogState extends State<_TrackerEditDialog> {
     return Transform.rotate(
       angle: widget.quarterTurns * pi / 2,
       child: Dialog(
-        backgroundColor: const Color(0xFF2A2A2A),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        backgroundColor: AppTheme.dialogBg,
+        shape: AppTheme.dialogShape,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 28),
           child: Column(
@@ -569,45 +573,11 @@ class _CommanderDamageView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final topEdge    = allPlayers.where((p) => p.seatPosition == SeatPosition.topEdge).toList();
-    final bottomEdge = allPlayers.where((p) => p.seatPosition == SeatPosition.bottomEdge).toList();
-    final leftSide   = allPlayers.where((p) => p.seatPosition == SeatPosition.leftSide).toList();
-    final rightSide  = allPlayers.where((p) => p.seatPosition == SeatPosition.rightSide).toList();
-
-    return Column(
-      children: [
-        if (topEdge.isNotEmpty)
-          Expanded(
-            flex: 1,
-            child: _buildSlot(topEdge.first),
-          ),
-        if (leftSide.isNotEmpty || rightSide.isNotEmpty)
-          Expanded(
-            flex: leftSide.length + rightSide.length,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                if (leftSide.isNotEmpty)
-                  Expanded(
-                    child: Column(
-                      children: leftSide.map((p) => Expanded(child: _buildSlot(p))).toList(),
-                    ),
-                  ),
-                if (rightSide.isNotEmpty)
-                  Expanded(
-                    child: Column(
-                      children: rightSide.map((p) => Expanded(child: _buildSlot(p))).toList(),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        if (bottomEdge.isNotEmpty)
-          Expanded(
-            flex: 1,
-            child: _buildSlot(bottomEdge.first),
-          ),
-      ],
+    return PlayerGridLayout<Player>(
+      positions: PlayersByPosition.from(allPlayers, (p) => p.seatPosition),
+      edgeFlex: 2,
+      sideFlex: 1,
+      slotBuilder: _buildSlot,
     );
   }
 }
@@ -767,18 +737,43 @@ class _HoldButton extends StatefulWidget {
 }
 
 class _HoldButtonState extends State<_HoldButton> {
+  // _timer serves double duty: first as the hold-threshold delay, then
+  // replaced with the repeat timer once the threshold fires.
   Timer? _timer;
+  bool _holding = false;
 
-  void _startHolding() {
-    widget.onActivate(widget.holdDelta);
-    _timer = Timer.periodic(const Duration(milliseconds: 500), (_) {
+  void _onTapDown(TapDownDetails _) {
+    final ms = GtSettingsScope.of(context).holdDurationMs;
+    _timer = Timer(Duration(milliseconds: ms), () {
+      _holding = true;
       widget.onActivate(widget.holdDelta);
+      _timer = Timer.periodic(const Duration(milliseconds: 500), (_) {
+        widget.onActivate(widget.holdDelta);
+      });
     });
+  }
+
+  void _onTapUp(TapUpDetails _) {
+    if (!_holding) {
+      // Threshold never fired — treat as a tap.
+      _timer?.cancel();
+      _timer = null;
+      widget.onActivate(widget.tapDelta);
+    } else {
+      _stopHolding();
+    }
+  }
+
+  void _onTapCancel() {
+    _timer?.cancel();
+    _timer = null;
+    _holding = false;
   }
 
   void _stopHolding() {
     _timer?.cancel();
     _timer = null;
+    _holding = false;
   }
 
   @override
@@ -791,9 +786,9 @@ class _HoldButtonState extends State<_HoldButton> {
   Widget build(BuildContext context) {
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onTap: () => widget.onActivate(widget.tapDelta),
-      onLongPressStart: (_) => _startHolding(),
-      onLongPressEnd: (_) => _stopHolding(),
+      onTapDown: _onTapDown,
+      onTapUp: _onTapUp,
+      onTapCancel: _onTapCancel,
     );
   }
 }

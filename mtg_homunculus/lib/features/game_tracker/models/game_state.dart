@@ -190,7 +190,7 @@ class GameState {
 
   // Player indices ordered clockwise around the table:
   // top edge → right side (top→bottom) → bottom edge → left side (bottom→top).
-  List<int> get _clockwiseOrder {
+  List<int> get clockwiseOrder {
     List<int> byPos(SeatPosition pos) => players
         .asMap()
         .entries
@@ -207,7 +207,7 @@ class GameState {
 
   // Advance to next player in clockwise order; reset all non-permanent trackers.
   GameState passTurn() {
-    final order = _clockwiseOrder;
+    final order = clockwiseOrder;
     final pos   = order.indexOf(activePlayerIndex);
     final nextIndex = order[(pos + 1) % order.length];
     final updated = players
