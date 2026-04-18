@@ -571,6 +571,27 @@ class _CommanderDamageView extends StatelessWidget {
     );
   }
 
+  // Opponents in clockwise turn order starting from the seat after self.
+  List<Player>? _clockwiseFlatOrder() {
+    final pos = self.seatPosition;
+    if (pos != SeatPosition.topEdge && pos != SeatPosition.bottomEdge) {
+      return null;
+    }
+    List<Player> byPos(SeatPosition p) =>
+        allPlayers.where((pl) => pl.seatPosition == p).toList();
+    final clockwise = [
+      ...byPos(SeatPosition.topEdge),
+      ...byPos(SeatPosition.rightSide),
+      ...byPos(SeatPosition.bottomEdge),
+      ...byPos(SeatPosition.leftSide).reversed,
+    ];
+    final selfIndex = clockwise.indexWhere((p) => p.id == self.id);
+    return List.generate(
+      clockwise.length - 1,
+      (i) => clockwise[(selfIndex + 1 + i) % clockwise.length],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return PlayerGridLayout<Player>(
@@ -578,6 +599,8 @@ class _CommanderDamageView extends StatelessWidget {
       edgeFlex: 2,
       sideFlex: 1,
       slotBuilder: _buildSlot,
+      flatOrder: _clockwiseFlatOrder(),
+      selfAtTop: self.seatPosition == SeatPosition.topEdge,
     );
   }
 }
