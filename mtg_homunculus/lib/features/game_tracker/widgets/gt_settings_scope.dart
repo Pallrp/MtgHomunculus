@@ -1,39 +1,8 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import '../models/game_state.dart'; // for kPlayerColors
+import '../../settings/models/game_tracker_settings.dart';
 
-/// Game-tracker settings passed down from AppShell via GameTrackerScreen.
-///
-/// hapticFeedback lives in AppSettings (app-wide) — not here.
-class GtSettings {
-  final int holdDurationMs;
-  final bool showZeroTrackers;
-  final bool confirmNewGame;
-  final List<Color> playerColors;
-
-  const GtSettings({
-    this.holdDurationMs   = 400,
-    this.showZeroTrackers = true,
-    this.confirmNewGame   = false,
-    this.playerColors     = kPlayerColors,
-  });
-
-  @override
-  bool operator ==(Object other) =>
-      other is GtSettings &&
-      other.holdDurationMs   == holdDurationMs &&
-      other.showZeroTrackers == showZeroTrackers &&
-      other.confirmNewGame   == confirmNewGame &&
-      listEquals(other.playerColors, playerColors);
-
-  @override
-  int get hashCode => Object.hash(
-        holdDurationMs,
-        showZeroTrackers,
-        confirmNewGame,
-        Object.hashAll(playerColors),
-      );
-}
+// Re-export so existing importers of this file still resolve GtSettings.
+export '../../settings/models/game_tracker_settings.dart' show GtSettings;
 
 /// Injects [GtSettings] into the game tracker widget tree.
 ///

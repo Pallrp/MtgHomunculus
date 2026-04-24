@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../../../features/settings/models/format_preset.dart';
 import '../models/game_state.dart';
 import '../models/player.dart';
 import '../models/players_by_position.dart';
+import 'gt_settings_scope.dart';
 import 'player_grid_layout.dart';
 
 // Height of the always-visible collapsed handle strip.
@@ -82,47 +84,69 @@ class _SetupSheetState extends State<SetupSheet> {
   //             new player goes to the other side.
   void _addPlayer() {
     if (_draftPlayers.length >= 6) return;
-    setState(() {
-      final currentCount = _draftPlayers.length;
-      final color = _nextAvailableColor();
+    setState(_addPlayerMutation);
+  }
 
-      if (currentCount % 2 == 0) {
-        // Even → odd: add at bottom short edge
+  // Pure mutation — does not call setState. Safe to call inside an outer setState.
+  void _addPlayerMutation() {
+    if (_draftPlayers.length >= 6) return;
+    final currentCount = _draftPlayers.length;
+    final color = _nextAvailableColor();
+
+    if (currentCount % 2 == 0) {
+      // Even → odd: add at bottom short edge
+      _draftPlayers.add(_DraftPlayer(
+        id: _newId(),
+        color: color,
+        seatPosition: SeatPosition.bottomEdge,
+      ));
+    } else {
+      // Odd → even: promote existing bottomEdge player to a side column,
+      // then add new player to the other side.
+      final pos = PlayersByPosition.from(_draftPlayers, (p) => p.seatPosition);
+      final edgeIndex = _draftPlayers
+          .indexWhere((p) => p.seatPosition == SeatPosition.bottomEdge);
+      if (edgeIndex != -1) {
+        final promoteToSide = pos.leftSide.length <= pos.rightSide.length
+            ? SeatPosition.leftSide
+            : SeatPosition.rightSide;
+        final newSide = promoteToSide == SeatPosition.leftSide
+            ? SeatPosition.rightSide
+            : SeatPosition.leftSide;
+        _draftPlayers[edgeIndex] =
+            _draftPlayers[edgeIndex].withSeat(promoteToSide);
         _draftPlayers.add(_DraftPlayer(
           id: _newId(),
           color: color,
-          seatPosition: SeatPosition.bottomEdge,
+          seatPosition: newSide,
         ));
       } else {
-        // Odd → even: promote existing bottomEdge player to a side column,
-        // then add new player to the other side.
-        final pos = PlayersByPosition.from(_draftPlayers, (p) => p.seatPosition);
-        final edgeIndex = _draftPlayers
-            .indexWhere((p) => p.seatPosition == SeatPosition.bottomEdge);
-        if (edgeIndex != -1) {
-          // Determine which side has fewer players
-          final promoteToSide = pos.leftSide.length <= pos.rightSide.length
+        _draftPlayers.add(_DraftPlayer(
+          id: _newId(),
+          color: color,
+          seatPosition: pos.leftSide.length <= pos.rightSide.length
               ? SeatPosition.leftSide
-              : SeatPosition.rightSide;
-          final newSide = promoteToSide == SeatPosition.leftSide
-              ? SeatPosition.rightSide
-              : SeatPosition.leftSide;
-          _draftPlayers[edgeIndex] = _draftPlayers[edgeIndex].withSeat(promoteToSide);
-          _draftPlayers.add(_DraftPlayer(
-            id: _newId(),
-            color: color,
-            seatPosition: newSide,
-          ));
-        } else {
-          // No edge player found — just add to the shorter side
-          _draftPlayers.add(_DraftPlayer(
-            id: _newId(),
-            color: color,
-            seatPosition: pos.leftSide.length <= pos.rightSide.length
-                ? SeatPosition.leftSide
-                : SeatPosition.rightSide,
-          ));
-        }
+              : SeatPosition.rightSide,
+        ));
+      }
+    }
+  }
+
+  // One-shot format apply — stamps draft with preset values, hands control back.
+  void _applyFormat(FormatPreset preset) {
+    setState(() {
+      _draftStartingLife = preset.startingLife;
+      _lifeController.text = '${preset.startingLife}';
+
+      final target = preset.playerCount.clamp(1, 6);
+      while (_draftPlayers.length > target) {
+        _draftPlayers.removeLast();
+      }
+      if (_draftPlayers.length == 1) {
+        _draftPlayers[0] = _draftPlayers[0].withSeat(SeatPosition.bottomEdge);
+      }
+      while (_draftPlayers.length < target) {
+        _addPlayerMutation();
       }
     });
   }
@@ -154,7 +178,29 @@ class _SetupSheetState extends State<SetupSheet> {
     });
   }
 
-  void _onNewGame() {
+  Future<void> _onNewGame() async {
+    final settings = GtSettingsScope.of(context);
+    if (settings.confirmNewGame && widget.game.gameStarted) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Start new game?'),
+          content: const Text('The current game will be lost.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('New Game'),
+            ),
+          ],
+        ),
+      );
+      if (!mounted || confirmed != true) return;
+    }
+
     final life = int.tryParse(_lifeController.text) ?? _draftStartingLife;
     // Always create fresh players — no state carried over from the previous game.
     final newPlayers = _draftPlayers.map((d) => Player.create(
@@ -202,9 +248,9 @@ class _SetupSheetState extends State<SetupSheet> {
         snap: true,
         snapSizes: [_collapsedSize, _expandedSize],
         builder: (context, scrollController) => Container(
-          decoration: const BoxDecoration(
-            color: Color(0xFF2A2A2A),
-            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surfaceContainer,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
           ),
           child: Column(
             children: [
@@ -255,7 +301,7 @@ class _SetupSheetState extends State<SetupSheet> {
               width: 36,
               height: 4,
               decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.3),
+                color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.3),
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
@@ -267,13 +313,15 @@ class _SetupSheetState extends State<SetupSheet> {
                   turns: _isExpanded ? 0.5 : 0,
                   duration: const Duration(milliseconds: 300),
                   child: Icon(Icons.keyboard_arrow_up_rounded,
-                      size: 16, color: Colors.white.withValues(alpha: 0.5)),
+                      size: 16,
+                      color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5)),
                 ),
                 const SizedBox(width: 4),
                 Text(
                   'Setup',
                   style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.5), fontSize: 12),
+                      color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5),
+                      fontSize: 12),
                 ),
               ],
             ),
@@ -290,6 +338,12 @@ class _SetupSheetState extends State<SetupSheet> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          if (GtSettingsScope.of(context).formatPresets.isNotEmpty) ...[
+            _buildSectionLabel('Format'),
+            const SizedBox(height: 8),
+            _buildFormatChips(),
+            const SizedBox(height: 20),
+          ],
           _buildSectionLabel('Players'),
           const SizedBox(height: 8),
           _LayoutPreview(
@@ -310,37 +364,63 @@ class _SetupSheetState extends State<SetupSheet> {
     );
   }
 
+  Widget _buildFormatChips() {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: GtSettingsScope.of(context).formatPresets.map((preset) {
+          return Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: ActionChip(
+              label: Text('${preset.name}  ${preset.startingLife}♥'),
+              onPressed: () => _applyFormat(preset),
+              backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+              labelStyle: TextStyle(
+                color: Theme.of(context).colorScheme.onSurface,
+                fontSize: 13,
+              ),
+              side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
   Widget _buildSectionLabel(String text) => Text(
         text,
         style: TextStyle(
-            color: Colors.white.withValues(alpha: 0.5),
+            color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5),
             fontSize: 11,
             letterSpacing: 1.2),
       );
 
   Widget _buildAddPlayerButton() {
     final disabled = _draftPlayers.length >= 6;
+    final cs = Theme.of(context).colorScheme;
     return GestureDetector(
       onTap: disabled ? null : _addPlayer,
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 10),
         decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: disabled ? 0.04 : 0.08),
+          color: disabled
+              ? cs.surfaceContainerHigh
+              : cs.surfaceContainerHighest,
           borderRadius: BorderRadius.circular(10),
           border: Border.all(
-              color: Colors.white.withValues(alpha: disabled ? 0.1 : 0.2)),
+              color: disabled ? cs.outlineVariant : cs.outline),
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(Icons.person_add_rounded,
                 size: 16,
-                color: Colors.white.withValues(alpha: disabled ? 0.2 : 0.6)),
+                color: cs.onSurface.withValues(alpha: disabled ? 0.3 : 0.7)),
             const SizedBox(width: 6),
             Text(
               disabled ? 'Max 6 players' : '+ Add Player',
               style: TextStyle(
-                  color: Colors.white.withValues(alpha: disabled ? 0.2 : 0.6),
+                  color: cs.onSurface.withValues(alpha: disabled ? 0.3 : 0.7),
                   fontSize: 13),
             ),
           ],
@@ -350,12 +430,13 @@ class _SetupSheetState extends State<SetupSheet> {
   }
 
   Widget _buildLifeInput() {
+    final cs = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.07),
+        color: cs.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.15)),
+        border: Border.all(color: cs.outlineVariant),
       ),
       child: Row(
         children: [
@@ -364,7 +445,7 @@ class _SetupSheetState extends State<SetupSheet> {
               controller: _lifeController,
               keyboardType: TextInputType.number,
               inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-              style: const TextStyle(color: Colors.white, fontSize: 20),
+              style: TextStyle(color: cs.onSurface, fontSize: 20),
               decoration: const InputDecoration(
                 border: InputBorder.none,
                 isDense: true,
@@ -433,7 +514,8 @@ class _LifeAdjustButton extends StatelessWidget {
       onTap: onTap,
       child: Padding(
         padding: const EdgeInsets.all(4),
-        child: Icon(icon, size: 18, color: Colors.white.withValues(alpha: 0.5)),
+        child: Icon(icon, size: 18,
+            color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5)),
       ),
     );
   }
@@ -483,12 +565,13 @@ class _LayoutPreviewState extends State<_LayoutPreview> {
     final pos       = PlayersByPosition.from(widget.players, (p) => p.seatPosition);
     final canRemove = widget.players.length > 1;
 
+    final cs = Theme.of(context).colorScheme;
     return Container(
       height: 280,
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.05),
+        color: cs.surfaceContainerHigh,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+        border: Border.all(color: cs.outlineVariant),
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(12),
@@ -531,7 +614,7 @@ class _LayoutPreviewState extends State<_LayoutPreview> {
               ? Center(
                   child: Icon(
                     Icons.delete_outline_rounded,
-                    color: Colors.white.withValues(alpha: 0.35),
+                    color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.35),
                     size: 18,
                   ),
                 )
@@ -564,9 +647,9 @@ class _LayoutPreviewState extends State<_LayoutPreview> {
         padding: const EdgeInsets.all(3),
         child: Container(
           decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.05),
+            color: Theme.of(context).colorScheme.surfaceContainer,
             borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
+            border: Border.all(color: Theme.of(context).colorScheme.outline),
           ),
         ),
       ),
@@ -617,17 +700,23 @@ class _LayoutPreviewState extends State<_LayoutPreview> {
         return Container(
           margin: const EdgeInsets.all(3),
           decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: hovering ? 0.15 : 0.04),
+            color: hovering
+                ? Theme.of(context).colorScheme.surfaceContainerHighest
+                : Theme.of(context).colorScheme.surfaceContainer,
             borderRadius: BorderRadius.circular(8),
             border: Border.all(
-              color: Colors.white.withValues(alpha: hovering ? 0.7 : 0.2),
+              color: hovering
+                  ? Theme.of(context).colorScheme.primary
+                  : Theme.of(context).colorScheme.outlineVariant,
               width: hovering ? 2 : 1,
             ),
           ),
           child: Center(
             child: Icon(
               icon,
-              color: Colors.white.withValues(alpha: hovering ? 1.0 : 0.35),
+              color: hovering
+                  ? Theme.of(context).colorScheme.primary
+                  : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.35),
               size: 20,
             ),
           ),

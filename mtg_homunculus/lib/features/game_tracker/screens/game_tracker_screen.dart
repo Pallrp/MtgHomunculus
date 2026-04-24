@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import '../../../app_theme.dart';
 import '../models/game_state.dart';
 import '../models/player.dart';
 import '../widgets/game_grid.dart';
@@ -9,7 +8,12 @@ import '../widgets/pass_diamond.dart';
 
 class GameTrackerScreen extends StatefulWidget {
   final GtSettings settings;
-  const GameTrackerScreen({super.key, this.settings = const GtSettings()});
+  final VoidCallback? onSettingsTap;
+  const GameTrackerScreen({
+    super.key,
+    this.settings = const GtSettings(),
+    this.onSettingsTap,
+  });
 
   @override
   State<GameTrackerScreen> createState() => _GameTrackerScreenState();
@@ -104,26 +108,21 @@ class _GameTrackerScreenState extends State<GameTrackerScreen> {
     return GtSettingsScope(
       settings: widget.settings,
       child: Scaffold(
-        backgroundColor: AppTheme.scaffoldBg,
       // Prevent the body from shrinking when the keyboard appears.
       // The SetupSheet strip would otherwise float upward and overlap cards.
       resizeToAvoidBottomInset: false,
       appBar: AppBar(
-        backgroundColor: AppTheme.appBarBg,
-        title: const Text(
-          'MtgHomunculus',
-          style: TextStyle(color: Colors.white, fontSize: 18),
-        ),
+        title: const Text('MtgHomunculus'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.apps_rounded, color: Colors.white70),
+            icon: const Icon(Icons.apps_rounded),
             tooltip: 'Selection',
             onPressed: () {},
           ),
           IconButton(
-            icon: const Icon(Icons.settings_outlined, color: Colors.white70),
+            icon: const Icon(Icons.settings_outlined),
             tooltip: 'Settings',
-            onPressed: () {},
+            onPressed: widget.onSettingsTap,
           ),
         ],
       ),

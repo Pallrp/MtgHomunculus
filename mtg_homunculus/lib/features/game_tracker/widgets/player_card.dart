@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
+import '../../../app_settings_scope.dart';
 import '../../../app_theme.dart';
 import '../models/player.dart';
 import '../models/players_by_position.dart';
@@ -69,8 +70,18 @@ class _PlayerCardState extends State<PlayerCard> {
         ? _lighten(player.color)
         : player.color.withValues(alpha: 0.6);
 
+    final settings = GtSettingsScope.of(context);
+    final visibleTrackers = settings.showZeroTrackers
+        ? player.trackers
+        : player.trackers.where((t) => t.value != 0).toList();
+    // Capture library here (inside GtSettingsScope) so the dialog can use it
+    // without needing GtSettingsScope in its own (overlay) context.
+    final trackerLibrary = settings.trackerLibrary;
+
+    // TODO(settings): life history — long-press life total to view per-turn log
+
     final trackerRow = _TrackerPillsRow(
-      trackers: player.trackers,
+      trackers: visibleTrackers,
       playerColor: player.color,
       quarterTurns: player.quarterTurns,
       onTrackerChange: widget.onTrackerChange,
@@ -79,6 +90,7 @@ class _PlayerCardState extends State<PlayerCard> {
         context: context,
         builder: (_) => ManageTrackersDialog(
           trackers: player.trackers,
+          trackerLibrary: trackerLibrary,
           quarterTurns: player.quarterTurns,
           onAdd: widget.onTrackerAdd,
           onRemove: widget.onTrackerRemove,
@@ -118,8 +130,8 @@ class _PlayerCardState extends State<PlayerCard> {
                     const SizedBox(width: 2),
                     Text(
                       '${player.commanderDamage[opp.id]}',
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurface,
                         fontSize: 11,
                         fontWeight: FontWeight.bold,
                         height: 1,
@@ -231,10 +243,11 @@ class _TrackerPillsRow extends StatelessWidget {
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.08),
+                  color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(20),
                 ),
-                child: Icon(Icons.add, size: 13, color: Colors.white.withValues(alpha: 0.5)),
+                child: Icon(Icons.add, size: 13,
+                    color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5)),
               ),
             ),
           ),
@@ -277,7 +290,10 @@ class _TrackerPill extends StatelessWidget {
     final bool hasValue = tracker.value > 0;
 
     return GestureDetector(
-      onTap: () => onChange(1),
+      onTap: () {
+        triggerHaptic(context);
+        onChange(1);
+      },
       onLongPress: () => _showOptions(context),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
@@ -407,7 +423,10 @@ class _DialogAdjustButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: onTap,
+      onTap: () {
+        triggerHaptic(context);
+        onTap();
+      },
       child: Container(
         width: 52,
         height: 52,
@@ -489,8 +508,8 @@ class _LifeTotalAreaState extends State<_LifeTotalArea> {
             IgnorePointer(
               child: Text(
                 '${widget.lifeTotal}',
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurface,
                   fontSize: 72,
                   fontWeight: FontWeight.bold,
                   height: 1,
@@ -505,7 +524,7 @@ class _LifeTotalAreaState extends State<_LifeTotalArea> {
                   child: Text(
                     _pendingDelta > 0 ? '+$_pendingDelta' : '$_pendingDelta',
                     style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.65),
+                      color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.65),
                       fontSize: 16,
                     ),
                   ),
@@ -713,8 +732,8 @@ class _CmdDamageCellState extends State<_CmdDamageCell> {
                 children: [
                   Text(
                     '$damage',
-                    style: const TextStyle(
-                      color: Colors.white,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurface,
                       fontSize: 28,
                       fontWeight: FontWeight.bold,
                       height: 1,
@@ -724,7 +743,7 @@ class _CmdDamageCellState extends State<_CmdDamageCell> {
                     Text(
                       _pendingDelta > 0 ? '+$_pendingDelta' : '$_pendingDelta',
                       style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.55),
+                        color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.55),
                         fontSize: 12,
                       ),
                     ),
@@ -769,8 +788,10 @@ class _HoldButtonState extends State<_HoldButton> {
     final ms = GtSettingsScope.of(context).holdDurationMs;
     _timer = Timer(Duration(milliseconds: ms), () {
       _holding = true;
+      triggerHaptic(context);
       widget.onActivate(widget.holdDelta);
       _timer = Timer.periodic(const Duration(milliseconds: 500), (_) {
+        triggerHaptic(context);
         widget.onActivate(widget.holdDelta);
       });
     });
@@ -781,6 +802,7 @@ class _HoldButtonState extends State<_HoldButton> {
       // Threshold never fired — treat as a tap.
       _timer?.cancel();
       _timer = null;
+      triggerHaptic(context);
       widget.onActivate(widget.tapDelta);
     } else {
       _stopHolding();

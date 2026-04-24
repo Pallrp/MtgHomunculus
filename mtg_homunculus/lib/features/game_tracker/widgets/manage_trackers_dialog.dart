@@ -2,12 +2,12 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import '../../../app_theme.dart';
 import '../models/tracker.dart';
-import '../models/default_trackers.dart';
 
 enum _Mode { manage, pick, create }
 
 class ManageTrackersDialog extends StatefulWidget {
   final List<Tracker> trackers;
+  final List<Tracker> trackerLibrary;
   final int quarterTurns;
   final void Function(Tracker tracker) onAdd;
   final void Function(String trackerId) onRemove;
@@ -16,6 +16,7 @@ class ManageTrackersDialog extends StatefulWidget {
   const ManageTrackersDialog({
     super.key,
     required this.trackers,
+    required this.trackerLibrary,
     required this.quarterTurns,
     required this.onAdd,
     required this.onRemove,
@@ -49,11 +50,12 @@ class _ManageTrackersDialogState extends State<ManageTrackersDialog> {
     super.dispose();
   }
 
-  // Default trackers not already on the card, filtered by search query
-  List<Tracker> get _availableTrackers {
+  // Library trackers not already on the card, filtered by search query.
+  // Takes the library read from GtSettingsScope in build().
+  List<Tracker> _availableTrackers(List<Tracker> library) {
     final activeIds = _trackers.map((t) => t.id).toSet();
     final query = _searchController.text.toLowerCase().trim();
-    return kDefaultTrackers
+    return library
         .where((t) => !activeIds.contains(t.id))
         .where((t) => query.isEmpty || t.name.toLowerCase().contains(query))
         .toList();
@@ -101,6 +103,8 @@ class _ManageTrackersDialogState extends State<ManageTrackersDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final library = widget.trackerLibrary;
+
     // Only rotate in manage mode. Pick/create views contain text fields — the
     // system keyboard always comes from the physical bottom of the screen, so
     // keeping those views portrait lets the keyboard align correctly.
@@ -132,7 +136,7 @@ class _ManageTrackersDialogState extends State<ManageTrackersDialog> {
                 _Mode.pick => _PickView(
                     key: const ValueKey(_Mode.pick),
                     searchController: _searchController,
-                    availableTrackers: _availableTrackers,
+                    availableTrackers: _availableTrackers(library),
                     onBack: () => setState(() => _mode = _Mode.manage),
                     onSelect: _addTracker,
                     onCreateTap: () => setState(() => _mode = _Mode.create),
