@@ -2,6 +2,9 @@
 # Edit at https://www.toptal.com/developers/gitignore?templates=flutter
 
 ### Flutter ###
+# DevTools IDE config — not needed for compilation
+devtools_options.yaml
+
 # Flutter/Dart/Pub related
 **/doc/api/
 .dart_tool/
@@ -74,4 +77,4 @@ lib/generated_plugin_registrant.dart
 .idea/
 
 # Claude
-.claude/
+.claude/*
