@@ -1,50 +1,40 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
-import '../models/roulette_animation.dart';
 
 // Visual clearance around the diamond for portal-scroll strips.
 // 64 px square rotated 45° has a diagonal of ~90 px; add breathing room.
 const double kPassDiamondClearance = 80.0;
 
-// The diamond button overlaid on the game grid.
-//
-// States:
-//   normal (2+ players): label "Pass" — advances turn
-//   normal (1 player):   label "Reset" — resets non-permanent trackers
-//   choosingStarter:     label "GAMBA" — triggers roulette animation
-//
-// The GAMBA animation cycles a highlight index through [playerCount] values,
-// decelerating until it lands on [gambaPick]. The caller provides the final
-// pick; the widget owns only the animation.
-
+/// Centred diamond button overlaid on the game grid.
+///
+/// All animation and roulette logic now lives in [GameTrackerScreen].
+/// This widget is purely presentational — it shows the correct label/icon and
+/// forwards taps to [onTap] (blocked while [gambaAnimating] is true).
+///
+/// States (controlled by caller):
+///   toolbelt idle  — shows [icon] (e.g. handyman wrench)
+///   choosingStarter — label "GAMBA", orange fill
+///   gambaAnimating  — shows spinner, taps suppressed
+///   overrideLabel   — shows supplied text (e.g. "Cancel", "OK"), dark-red fill
 class PassDiamond extends StatefulWidget {
-  // Player indices in clockwise board order — drives both the roulette sweep
-  // and the Pass label logic.
-  final List<int> playerOrder;
+  /// Fires on tap. Suppressed while [gambaAnimating] is true.
+  final VoidCallback onTap;
+  /// True while GAMBA roulette is running — shows spinner, blocks taps.
+  final bool gambaAnimating;
+  /// True between game setup and the GAMBA tap (label "GAMBA", orange fill).
   final bool choosingStarter;
-  // Called when tapped in normal mode (single player = reset, multi = pass).
-  final VoidCallback onPass;
-  // Called when tapped in GAMBA mode. Returns the selected player index.
-  final void Function(int pickedIndex) onGamba;
-  // Called each tick of the GAMBA animation with the currently highlighted index.
-  // Use this to flash a border on the corresponding PlayerCard in GameGrid.
-  final void Function(int index)? onGambaHighlight;
-  // Called when a directional swipe is detected on the diamond.
-  // Axis.horizontal = left/right swipe; Axis.vertical = up/down swipe.
-  final void Function(Axis)? onSwipe;
-  // When non-null, overrides the computed label (e.g. "Cancel" during pick overlay).
-  // Swipe gestures are suppressed while an override label is active.
+  /// When non-null, overrides the computed label (e.g. "Cancel", "OK").
   final String? overrideLabel;
+  /// Icon shown in the default (idle) state. Ignored when label is shown.
+  final IconData? icon;
 
   const PassDiamond({
     super.key,
-    required this.playerOrder,
-    required this.onPass,
-    required this.onGamba,
+    required this.onTap,
+    this.gambaAnimating = false,
     this.choosingStarter = false,
-    this.onGambaHighlight,
-    this.onSwipe,
     this.overrideLabel,
+    this.icon,
   });
 
   @override
@@ -53,10 +43,6 @@ class PassDiamond extends StatefulWidget {
 
 class _PassDiamondState extends State<PassDiamond>
     with SingleTickerProviderStateMixin {
-  bool _animating = false;
-  final RouletteAnimation _roulette = RouletteAnimation();
-  Axis? _lockedAxis;
-
   late final AnimationController _pressCtrl;
   late final Animation<double> _scaleAnim;
 
@@ -74,66 +60,21 @@ class _PassDiamondState extends State<PassDiamond>
 
   @override
   void dispose() {
-    _roulette.cancel();
     _pressCtrl.dispose();
     super.dispose();
   }
 
-  void _onPanStart(DragStartDetails _) {
-    _lockedAxis = null;
-    _pressCtrl.reverse();
-  }
-
-  void _onPanUpdate(DragUpdateDetails details) {
-    if (_lockedAxis != null) return;
-    final dx = details.delta.dx.abs();
-    final dy = details.delta.dy.abs();
-    if (dx > 3 || dy > 3) {
-      _lockedAxis = dx >= dy ? Axis.horizontal : Axis.vertical;
-    }
-  }
-
-  void _onPanEnd(DragEndDetails details) {
-    final axis = _lockedAxis;
-    _lockedAxis = null;
-    if (axis == null || widget.onSwipe == null || _animating || widget.overrideLabel != null) return;
-    final velocity = axis == Axis.horizontal
-        ? details.velocity.pixelsPerSecond.dx.abs()
-        : details.velocity.pixelsPerSecond.dy.abs();
-    if (velocity > 200) widget.onSwipe!(axis);
-  }
-
   void _handleTap() {
-    if (_animating) return;
-    if (widget.choosingStarter) {
-      _startGamba();
-    } else {
-      widget.onPass();
-    }
-  }
-
-  void _startGamba() {
-    if (_animating) return;
-    setState(() => _animating = true);
-
-    // Sweep clockwise through player order — RouletteAnimation handles the
-    // deceleration curve and random pick identically to the Random Player tool.
-    _roulette.start<int>(
-      items: widget.playerOrder,
-      onHighlight: (index) => widget.onGambaHighlight?.call(index),
-      onComplete: (index) {
-        setState(() => _animating = false);
-        widget.onGamba(index);
-      },
-      isMounted: () => mounted,
-    );
+    if (widget.gambaAnimating) return;
+    widget.onTap();
   }
 
   String get _label {
-    if (_animating) return '';
+    if (widget.gambaAnimating) return '';
     if (widget.overrideLabel != null) return widget.overrideLabel!;
     if (widget.choosingStarter) return 'GAMBA';
-    return widget.playerOrder.length == 1 ? 'Reset' : 'Pass';
+    if (widget.icon != null) return ''; // icon shown instead of text
+    return 'Pass';
   }
 
   @override
@@ -145,45 +86,48 @@ class _PassDiamondState extends State<PassDiamond>
         _handleTap();
       },
       onTapCancel: () => _pressCtrl.reverse(),
-      onPanStart: _onPanStart,
-      onPanUpdate: _onPanUpdate,
-      onPanEnd: _onPanEnd,
       child: ScaleTransition(
         scale: _scaleAnim,
         child: _DiamondShape(
           label: _label,
-          isAnimating: _animating,
+          isAnimating: widget.gambaAnimating,
           choosingStarter: widget.choosingStarter,
-          isCancel: widget.overrideLabel != null,
+          isOverride: widget.overrideLabel != null,
+          icon: widget.icon,
         ),
       ),
     );
   }
 }
 
+// ---------------------------------------------------------------------------
+
 class _DiamondShape extends StatelessWidget {
   final String label;
   final bool isAnimating;
   final bool choosingStarter;
-  final bool isCancel;
+  /// True when an overrideLabel is active — uses dark-red fill.
+  final bool isOverride;
+  final IconData? icon;
 
   const _DiamondShape({
     required this.label,
     required this.isAnimating,
     required this.choosingStarter,
-    this.isCancel = false,
+    this.isOverride = false,
+    this.icon,
   });
 
   @override
   Widget build(BuildContext context) {
     final color = choosingStarter
         ? const Color(0xFFE67E22) // orange for GAMBA
-        : isCancel
-            ? const Color(0xFF7A2D2D) // dark red for cancel/pick mode
-            : const Color(0xFF3A3A3A);
+        : isOverride
+            ? const Color(0xFF7A2D2D) // dark red for cancel / OK phase
+            : const Color(0xFF3A3A3A); // default dark grey
 
     return Transform.rotate(
-      angle: pi / 4, // 45° to make a diamond from a square
+      angle: pi / 4, // 45° → square becomes diamond
       child: Container(
         width: 64,
         height: 64,
@@ -199,7 +143,7 @@ class _DiamondShape extends StatelessWidget {
           ],
         ),
         child: Transform.rotate(
-          angle: -pi / 4, // un-rotate the label so text is upright
+          angle: -pi / 4, // un-rotate so content is upright
           child: Center(
             child: isAnimating
                 ? const SizedBox(
@@ -210,15 +154,17 @@ class _DiamondShape extends StatelessWidget {
                       color: Colors.white,
                     ),
                   )
-                : Text(
-                    label,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 13,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 0.5,
-                    ),
-                  ),
+                : icon != null && label.isEmpty
+                    ? Icon(icon, color: Colors.white, size: 22)
+                    : Text(
+                        label,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
           ),
         ),
       ),

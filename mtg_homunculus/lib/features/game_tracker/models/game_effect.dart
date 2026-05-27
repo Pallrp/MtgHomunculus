@@ -2,10 +2,6 @@ import 'package:flutter/material.dart';
 
 sealed class GameEffect {
   const GameEffect();
-
-  // Return a replacement effect on turn pass, or null to remove entirely.
-  // Default: persist unchanged.
-  GameEffect? onTurnPassed() => this;
 }
 
 // Tags one specific player (Monarch, Initiative, …).
@@ -19,11 +15,6 @@ sealed class PlayerEffect extends GameEffect {
 
   // Optional border color painted as a foreground ring on the player card. Null = none.
   Color? get cardOutlineColor => null;
-}
-
-// Applies to the whole game screen (Day/Night, Storm, …).
-sealed class GlobalEffect extends GameEffect {
-  const GlobalEffect();
 }
 
 // ---------------------------------------------------------------------------
@@ -50,22 +41,4 @@ class InitiativeEffect extends PlayerEffect {
     size: 18,
     color: Color(0xFF9B59B6),
   );
-}
-
-// ---------------------------------------------------------------------------
-// Concrete GlobalEffect types
-// ---------------------------------------------------------------------------
-
-class DayNightEffect extends GlobalEffect {
-  final bool isDay;
-  const DayNightEffect({required this.isDay});
-}
-
-class StormEffect extends GlobalEffect {
-  final int count;
-  const StormEffect({required this.count});
-
-  // Storm resets to 0 on turn pass — effect persists, count resets.
-  @override
-  StormEffect onTurnPassed() => const StormEffect(count: 0);
 }

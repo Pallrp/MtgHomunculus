@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'game_effect.dart';
 import 'player.dart';
-import 'tracker.dart';
 
 // Default color palette — one per player slot (supports up to 6 players)
 const List<Color> kPlayerColors = [
@@ -16,17 +15,11 @@ const List<Color> kPlayerColors = [
 class GameState {
   final List<Player> players;
   final int startingLife;
-  final int activePlayerIndex;
-  final bool gameStarted;
-  final bool choosingStarter;
   final List<GameEffect> effects;
 
   const GameState({
     required this.players,
     this.startingLife = 40,
-    this.activePlayerIndex = 0,
-    this.gameStarted = false,
-    this.choosingStarter = false,
     this.effects = const [],
   });
 
@@ -46,21 +39,14 @@ class GameState {
   GameState copyWith({
     List<Player>? players,
     int? startingLife,
-    int? activePlayerIndex,
-    bool? gameStarted,
-    bool? choosingStarter,
     List<GameEffect>? effects,
   }) =>
       GameState(
         players: players ?? this.players,
         startingLife: startingLife ?? this.startingLife,
-        activePlayerIndex: activePlayerIndex ?? this.activePlayerIndex,
-        gameStarted: gameStarted ?? this.gameStarted,
-        choosingStarter: choosingStarter ?? this.choosingStarter,
         effects: effects ?? this.effects,
       );
 
-  // ---------------------------------------------------------------------------
   // ---------------------------------------------------------------------------
   // Effect helpers
   // ---------------------------------------------------------------------------
@@ -77,17 +63,6 @@ class GameState {
   // Pre-filtered list for one player — passed to PlayerCard by GameGrid.
   List<PlayerEffect> effectsForPlayer(String playerId) =>
       effects.whereType<PlayerEffect>().where((e) => e.playerId == playerId).toList();
-
-  GameState _applyTurnPassedToEffects() {
-    final updated = effects
-        .map((e) => e.onTurnPassed())
-        .whereType<GameEffect>()
-        .toList();
-    return copyWith(effects: updated);
-  }
-
-  DayNightEffect? get dayNight => effects.whereType<DayNightEffect>().firstOrNull;
-  StormEffect?    get storm    => effects.whereType<StormEffect>().firstOrNull;
 
   // ---------------------------------------------------------------------------
   // Player management
@@ -115,7 +90,6 @@ class GameState {
   }
 
   // Remove a player by id. Cleans up commanderDamage entries in all other players.
-  // Adjusts activePlayerIndex if needed.
   GameState removePlayer(String playerId) {
     assert(players.length > 1, 'Cannot remove the last player');
     final updated = players
@@ -126,13 +100,7 @@ class GameState {
           return p.copyWith(commanderDamage: newDamage);
         })
         .toList();
-    final removedIndex = players.indexWhere((p) => p.id == playerId);
-    final newActiveIndex = activePlayerIndex >= updated.length
-        ? updated.length - 1
-        : (removedIndex <= activePlayerIndex && activePlayerIndex > 0)
-            ? activePlayerIndex - 1
-            : activePlayerIndex;
-    return copyWith(players: updated, activePlayerIndex: newActiveIndex);
+    return copyWith(players: updated);
   }
 
   // Update the seat position of a player.
@@ -144,7 +112,7 @@ class GameState {
   }
 
   // ---------------------------------------------------------------------------
-  // Life & tracker changes
+  // Life & commander damage
   // ---------------------------------------------------------------------------
 
   GameState updatePlayerLife(int playerIndex, int delta) {
@@ -154,20 +122,6 @@ class GameState {
     );
     return copyWith(players: updated);
   }
-
-  GameState updateTrackerValue(int playerIndex, String trackerId, int delta) {
-    final player = players[playerIndex];
-    final updatedTrackers = player.trackers
-        .map((t) => t.id == trackerId ? t.copyWith(value: t.value + delta) : t)
-        .toList();
-    final updated = List<Player>.from(players);
-    updated[playerIndex] = player.copyWith(trackers: updatedTrackers);
-    return copyWith(players: updated);
-  }
-
-  // ---------------------------------------------------------------------------
-  // Commander damage
-  // ---------------------------------------------------------------------------
 
   // Adjust commander damage received by [defenderId] from [attackerId].
   // Also adjusts the defender's life total by the same delta.
@@ -183,38 +137,6 @@ class GameState {
       }
       return p;
     }).toList();
-    return copyWith(players: updated);
-  }
-
-  // ---------------------------------------------------------------------------
-  // Tracker list management
-  // ---------------------------------------------------------------------------
-
-  GameState addTrackerToPlayer(int playerIndex, Tracker tracker) {
-    final updated = List<Player>.from(players);
-    final player = players[playerIndex];
-    updated[playerIndex] = player.copyWith(
-      trackers: [...player.trackers, tracker],
-    );
-    return copyWith(players: updated);
-  }
-
-  GameState removeTrackerFromPlayer(int playerIndex, String trackerId) {
-    final updated = List<Player>.from(players);
-    final player = players[playerIndex];
-    updated[playerIndex] = player.copyWith(
-      trackers: player.trackers.where((t) => t.id != trackerId).toList(),
-    );
-    return copyWith(players: updated);
-  }
-
-  GameState reorderPlayerTrackers(int playerIndex, int oldIndex, int newIndex) {
-    final updated = List<Player>.from(players);
-    final player = players[playerIndex];
-    final trackers = List<Tracker>.from(player.trackers);
-    final item = trackers.removeAt(oldIndex);
-    trackers.insert(newIndex, item);
-    updated[playerIndex] = player.copyWith(trackers: trackers);
     return copyWith(players: updated);
   }
 
@@ -239,28 +161,8 @@ class GameState {
     ];
   }
 
-  // Advance to next player in clockwise order; reset all non-permanent trackers.
-  GameState passTurn() {
-    final order = clockwiseOrder;
-    final pos   = order.indexOf(activePlayerIndex);
-    final nextIndex = order[(pos + 1) % order.length];
-    final updated = players
-        .map((p) => p.copyWith(
-              trackers: p.trackers
-                  .map((t) => t.permanent ? t : t.reset())
-                  .toList(),
-            ))
-        .toList();
-    return copyWith(players: updated, activePlayerIndex: nextIndex)
-        ._applyTurnPassedToEffects();
-  }
-
-  // Set the active player directly (used by WHO'S STARTING? selection).
-  GameState setActivePlayer(int index) =>
-      copyWith(activePlayerIndex: index, choosingStarter: false, gameStarted: true);
-
-  // Apply new player list and starting life from Setup draft, then trigger
-  // WHO'S STARTING? overlay.
+  // Apply new player list and starting life from Setup draft.
+  // Returns a clean GameState with reset life totals and cleared effects.
   GameState applySetup({
     required List<Player> newPlayers,
     required int newStartingLife,
@@ -273,29 +175,17 @@ class GameState {
     return GameState(
       players: resolved.map((p) => p.copyWith(lifeTotal: newStartingLife)).toList(),
       startingLife: newStartingLife,
-      activePlayerIndex: 0,
-      gameStarted: solo,
-      choosingStarter: !solo,
     );
   }
 
-  // Keep the same players and colors but reset life totals and non-permanent trackers.
-  GameState resetGame() {
-    final solo = players.length == 1;
-    return GameState(
-      players: players
-          .map((p) => p.copyWith(
-                lifeTotal: startingLife,
-                trackers: p.trackers
-                    .where((t) => t.permanent)
-                    .map((t) => t.reset())
-                    .toList(),
-                commanderDamage: {for (final id in p.commanderDamage.keys) id: 0},
-              ))
-          .toList(),
-      startingLife: startingLife,
-      gameStarted: solo,
-      choosingStarter: !solo,
-    );
-  }
+  // Keep the same players and colors but reset life totals and commander damage.
+  GameState resetGame() => GameState(
+        players: players
+            .map((p) => p.copyWith(
+                  lifeTotal: startingLife,
+                  commanderDamage: {for (final id in p.commanderDamage.keys) id: 0},
+                ))
+            .toList(),
+        startingLife: startingLife,
+      );
 }

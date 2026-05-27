@@ -5,7 +5,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../core/logging/app_logger.dart';
 
-import '../../game_tracker/models/tracker.dart';
 import '../../game_tracker/models/game_state.dart'; // kPlayerColors
 import '../models/app_settings.dart';
 import '../models/format_preset.dart';
@@ -14,15 +13,12 @@ import '../models/setting_enums.dart';
 
 class SettingsService {
   final SharedPreferences _prefs;
-  final ValueNotifier<List<Tracker>>      _trackerLibrary;
   final ValueNotifier<List<FormatPreset>> _formatLibrary;
 
   SettingsService._(
     this._prefs,
-    List<Tracker> trackers,
     List<FormatPreset> formats,
-  )   : _trackerLibrary = ValueNotifier(trackers),
-        _formatLibrary  = ValueNotifier(formats);
+  ) : _formatLibrary = ValueNotifier(formats);
 
   // ---------------------------------------------------------------------------
   // Load — one async call at app start
@@ -33,7 +29,6 @@ class SettingsService {
     final prefs   = await SharedPreferences.getInstance();
     final service = SettingsService._(
       prefs,
-      _readTrackerLibrary(prefs),
       _readFormatPresets(prefs),
     );
     return (
@@ -58,54 +53,11 @@ class SettingsService {
   // GtSettings saves
   // ---------------------------------------------------------------------------
 
-  void setShowZeroTrackers(bool v)         => _prefs.setBool('gt.showZeroTrackers', v);
   void setConfirmNewGame(bool v)           => _prefs.setBool('gt.confirmNewGame', v);
-  void setAdaptiveTheme(bool v)            => _prefs.setBool('gt.adaptiveTheme', v);
   void setHoldSensitivity(HoldSensitivity v) =>
       _prefs.setString('gt.holdSensitivity', v.name);
   void setPlayerColors(List<Color> colors) =>
       _prefs.setString('gt.playerColors', _encodeColors(colors));
-
-  // ---------------------------------------------------------------------------
-  // Tracker library
-  // ---------------------------------------------------------------------------
-
-  ValueNotifier<List<Tracker>> get trackerLibraryNotifier => _trackerLibrary;
-  List<Tracker> get trackerLibrary => _trackerLibrary.value;
-
-  void addTracker(Tracker t) {
-    _mutateLibrary((l) => l..add(t));
-  }
-
-  void updateTracker(Tracker t) {
-    _mutateLibrary((l) {
-      final i = l.indexWhere((x) => x.id == t.id);
-      if (i != -1) l[i] = t;
-    });
-  }
-
-  void removeTracker(String id) {
-    _mutateLibrary((l) => l..removeWhere((t) => t.id == id));
-  }
-
-  void reorderTrackers(int from, int to) {
-    _mutateLibrary((l) {
-      final t = l.removeAt(from);
-      l.insert(to, t);
-    });
-  }
-
-  // Seeding — called once on first launch (and again for new defaults in updates).
-  void seedDefaultTrackers(List<Tracker> defaults) {
-    final seeded = _prefs.getStringList('gt.seededTrackerIds') ?? [];
-    final toSeed = defaults.where((t) => !seeded.contains(t.id)).toList();
-    if (toSeed.isEmpty) return;
-    _mutateLibrary((l) => l..addAll(toSeed));
-    _prefs.setStringList(
-      'gt.seededTrackerIds',
-      [...seeded, ...toSeed.map((t) => t.id)],
-    );
-  }
 
   // ---------------------------------------------------------------------------
   // Format presets
@@ -150,20 +102,6 @@ class SettingsService {
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
-
-  void _mutateLibrary(void Function(List<Tracker>) fn) {
-    final updated = [..._trackerLibrary.value];
-    fn(updated);
-    _trackerLibrary.value = updated;
-    try {
-      _prefs.setString(
-        'gt.presetTrackers',
-        jsonEncode(updated.map((t) => t.toJson()).toList()),
-      );
-    } catch (e, s) {
-      AppLogger.e('Failed to persist tracker library', error: e, stackTrace: s);
-    }
-  }
 
   void _mutateFormats(void Function(List<FormatPreset>) fn) {
     final updated = [..._formatLibrary.value];
@@ -210,25 +148,10 @@ class SettingsService {
     final colorsRaw = _prefs.getString('gt.playerColors');
     final colors = colorsRaw != null ? _decodeColors(colorsRaw) : kPlayerColors;
     return GtSettings(
-      showZeroTrackers: _prefs.getBool('gt.showZeroTrackers') ?? true,
       confirmNewGame:   _prefs.getBool('gt.confirmNewGame') ?? false,
-      adaptiveTheme:    _prefs.getBool('gt.adaptiveTheme') ?? true,
       holdDurationMs:   sensitivity.durationMs,
       playerColors:     colors,
-      trackerLibrary:   _trackerLibrary.value,
     );
-  }
-
-  static List<Tracker> _readTrackerLibrary(SharedPreferences prefs) {
-    final raw = prefs.getString('gt.presetTrackers');
-    if (raw == null) return [];
-    try {
-      return (jsonDecode(raw) as List<dynamic>)
-          .map((e) => Tracker.fromJson(e as Map<String, dynamic>))
-          .toList();
-    } catch (_) {
-      return [];
-    }
   }
 
   static List<FormatPreset> _readFormatPresets(SharedPreferences prefs) {

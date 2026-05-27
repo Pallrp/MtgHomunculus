@@ -4,7 +4,6 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import 'app_settings_scope.dart';
 import 'sub_app.dart';
 import 'features/game_tracker/models/default_formats.dart';
-import 'features/game_tracker/models/default_trackers.dart';
 import 'features/game_tracker/screens/game_tracker_screen.dart';
 import 'core/logging/app_logger.dart';
 import 'features/settings/models/game_tracker_settings.dart';
@@ -47,17 +46,12 @@ class _AppShellState extends State<AppShell> {
     _service = widget.service;
     _app     = widget.app;
 
-    // Seed before adding listeners so seed mutations don't fire callbacks
-    // before _gt is fully initialized.
-    _service.seedDefaultTrackers(kDefaultTrackers);
     _service.seedDefaultFormats(kDefaultFormats);
 
     _gt = widget.gt.copyWith(
-      trackerLibrary: _service.trackerLibrary,
-      formatPresets:  _service.formatPresets,
+      formatPresets: _service.formatPresets,
     );
 
-    _service.trackerLibraryNotifier.addListener(_onTrackerLibraryChanged);
     _service.formatPresetsNotifier.addListener(_onFormatPresetsChanged);
 
     _lifecycleListener = AppLifecycleListener(
@@ -72,7 +66,6 @@ class _AppShellState extends State<AppShell> {
   @override
   void dispose() {
     _lifecycleListener.dispose();
-    _service.trackerLibraryNotifier.removeListener(_onTrackerLibraryChanged);
     _service.formatPresetsNotifier.removeListener(_onFormatPresetsChanged);
     super.dispose();
   }
@@ -80,11 +73,6 @@ class _AppShellState extends State<AppShell> {
   // ---------------------------------------------------------------------------
   // Library listeners
   // ---------------------------------------------------------------------------
-
-  void _onTrackerLibraryChanged() {
-    if (!mounted) return;
-    setState(() => _gt = _gt.copyWith(trackerLibrary: _service.trackerLibrary));
-  }
 
   void _onFormatPresetsChanged() {
     if (!mounted) return;

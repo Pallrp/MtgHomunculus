@@ -9,7 +9,6 @@ import '../widgets/log_test_dialog.dart';
 import '../widgets/setting_nav_tile.dart';
 import '../widgets/setting_segment.dart';
 import '../widgets/setting_toggle.dart';
-import '../widgets/preset_tracker_list.dart';
 import '../widgets/format_preset_list.dart';
 import '../widgets/player_color_picker.dart';
 import '../../../../core/logging/app_logger.dart';
@@ -177,19 +176,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       children: [
         _sectionHeader('Presets'),
         ListenableBuilder(
-          listenable: widget.service.trackerLibraryNotifier,
-          builder: (_, _) => SettingNavTile(
-            label: 'Tracker Library',
-            subtitle: '${widget.service.trackerLibrary.length} trackers',
-            onTap: () => Navigator.push<void>(
-              context,
-              MaterialPageRoute(
-                builder: (_) => PresetTrackerList(service: widget.service),
-              ),
-            ),
-          ),
-        ),
-        ListenableBuilder(
           listenable: widget.service.formatPresetsNotifier,
           builder: (_, _) => SettingNavTile(
             label: 'Format Presets',
@@ -221,30 +207,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         _sectionHeader('Gameplay'),
         SettingToggle(
-          label: 'Show zero-value trackers',
-          subtitle: 'Keep tracker pills visible when their value is 0',
-          value: _gt.showZeroTrackers,
-          onChanged: (v) {
-            widget.service.setShowZeroTrackers(v);
-            _updateGt(_gt.copyWith(showZeroTrackers: v));
-          },
-        ),
-        SettingToggle(
           label: 'Confirm before New Game',
           subtitle: 'Ask before wiping the current game',
           value: _gt.confirmNewGame,
           onChanged: (v) {
             widget.service.setConfirmNewGame(v);
             _updateGt(_gt.copyWith(confirmNewGame: v));
-          },
-        ),
-        SettingToggle(
-          label: 'Adaptive theme',
-          subtitle: 'Allow active effects like Day/Night to change the visual theme',
-          value: _gt.adaptiveTheme,
-          onChanged: (v) {
-            widget.service.setAdaptiveTheme(v);
-            _updateGt(_gt.copyWith(adaptiveTheme: v));
           },
         ),
         SettingSegment<HoldSensitivity>(

@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+// ignore: unnecessary_import — explicit for debugPaintSizeEnabled (wireframe mode)
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'app_shell.dart';
@@ -10,6 +12,7 @@ import 'features/settings/services/settings_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // debugPaintSizeEnabled = false; // set true to overlay widget bounds (wireframe mode)
   // Load settings here — platform channel is guaranteed ready after
   // ensureInitialized(), eliminating any cold-start stall risk.
   final loaded  = await SettingsService.load();

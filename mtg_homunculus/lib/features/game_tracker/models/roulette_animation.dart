@@ -22,7 +22,7 @@ class RouletteAnimation {
   ///   Prevents setState-after-dispose crashes when the widget is gone.
   void start<T>({
     required List<T> items,
-    required void Function(T item) onHighlight,
+    void Function(T item)? onHighlight,
     required void Function(T winner) onComplete,
     required bool Function() isMounted,
   }) {
@@ -39,7 +39,7 @@ class RouletteAnimation {
 
     void tick() {
       if (!isMounted()) { cancel(); return; }
-      onHighlight(items[step % n]);
+      onHighlight?.call(items[step % n]);
       step++;
       if (step >= totalSteps) {
         cancel();

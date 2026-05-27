@@ -2,26 +2,18 @@ import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import '../../../app_settings_scope.dart';
-import '../../../app_theme.dart';
 import '../models/game_effect.dart';
 import '../models/player.dart';
 import '../models/players_by_position.dart';
-import '../models/tracker.dart';
 import 'gt_settings_scope.dart';
-import 'manage_trackers_dialog.dart';
 import 'player_grid_layout.dart';
 
 class PlayerCard extends StatefulWidget {
   final Player player;
   // All players in the game, including self — needed to build the opponent rows.
   final List<Player> allPlayers;
-  final bool isActive;
-  final void Function(int delta) onLifeChange;
-  final void Function(String trackerId, int delta) onTrackerChange;
-  final void Function(Tracker tracker) onTrackerAdd;
-  final void Function(String trackerId) onTrackerRemove;
-  final void Function(int oldIndex, int newIndex) onTrackerReorder;
   // attackerId is the opponent whose commander dealt the damage.
+  final void Function(int delta) onLifeChange;
   final void Function(String attackerId, int delta) onCommanderDamage;
   // Pre-filtered by GameGrid — only effects for this player.
   final List<PlayerEffect> activeEffects;
@@ -33,12 +25,7 @@ class PlayerCard extends StatefulWidget {
     required this.player,
     required this.allPlayers,
     required this.onLifeChange,
-    required this.onTrackerChange,
-    required this.onTrackerAdd,
-    required this.onTrackerRemove,
-    required this.onTrackerReorder,
     required this.onCommanderDamage,
-    this.isActive = false,
     this.activeEffects = const [],
     this.onEffectTap,
   });
@@ -63,56 +50,18 @@ class _PlayerCardState extends State<PlayerCard> {
     }
   }
 
-  // Returns a lightened version of [base] for use as the active border color.
-  Color _lighten(Color base) {
-    final hsl = HSLColor.fromColor(base);
-    return hsl.withLightness((hsl.lightness + 0.1).clamp(0.0, 1.0)).toColor();
-  }
-
   @override
   Widget build(BuildContext context) {
     final player = widget.player;
     final opponents = _opponents;
-    final borderColor = widget.isActive
-        ? _lighten(player.color)
-        : player.color.withValues(alpha: 0.6);
-    final borderWidth = widget.isActive ? 3.0 : 1.5;
+    final borderColor = player.color.withValues(alpha: 0.6);
+    const borderWidth = 1.5;
     final outlineColor = widget.activeEffects
         .map((e) => e.cardOutlineColor)
         .whereType<Color>()
         .firstOrNull;
 
-    final settings = GtSettingsScope.of(context);
-    final visibleTrackers = settings.showZeroTrackers
-        ? player.trackers
-        : player.trackers.where((t) => t.value != 0).toList();
-    // Capture library here (inside GtSettingsScope) so the dialog can use it
-    // without needing GtSettingsScope in its own (overlay) context.
-    final trackerLibrary = settings.trackerLibrary;
-
     // TODO(settings): life history — long-press life total to view per-turn log
-
-    final trackerRow = _TrackerPillsRow(
-      trackers: visibleTrackers,
-      playerColor: player.color,
-      quarterTurns: player.quarterTurns,
-      onTrackerChange: widget.onTrackerChange,
-      onTrackerRemove: widget.onTrackerRemove,
-      onManageTap: (context) => showDialog<void>(
-        context: context,
-        builder: (_) => ManageTrackersDialog(
-          trackers: player.trackers,
-          trackerLibrary: trackerLibrary,
-          quarterTurns: player.quarterTurns,
-          onAdd: widget.onTrackerAdd,
-          onRemove: widget.onTrackerRemove,
-          onReorder: widget.onTrackerReorder,
-        ),
-      ),
-    );
-
-    final isEdge = player.seatPosition == SeatPosition.topEdge ||
-        player.seatPosition == SeatPosition.bottomEdge;
 
     // Reusable icon content — null when nothing to show.
     final effectIconsContent = widget.activeEffects.isEmpty
@@ -138,22 +87,8 @@ class _PlayerCardState extends State<PlayerCard> {
             ],
           );
 
-    // Fixed height always reserved for side cards — prevents life total shift.
-    final effectsRow = SizedBox(height: 36, child: effectIconsContent);
-
-    final lifeArea = Expanded(
-      child: _LifeTotalArea(
-        lifeTotal: player.lifeTotal,
-        onLifeChange: widget.onLifeChange,
-        onSwipe: opponents.isNotEmpty
-            ? () => setState(() => _showingCommanderDamage = true)
-            : null,
-      ),
-    );
-
-    // One shield icon + damage number per opponent who has dealt commander
-    // damage. Icon uses the opponent's full color; number is plain white.
-    // Hidden entirely when no commander damage has been received.
+    // Commander damage summary — one shield+number per opponent who has dealt
+    // commander damage. Hidden when none. Display only (no tap handler).
     final damagedBy = opponents
         .where((opp) => (player.commanderDamage[opp.id] ?? 0) > 0)
         .toList();
@@ -183,55 +118,47 @@ class _PlayerCardState extends State<PlayerCard> {
             )).toList(),
           );
 
-    // Side cards: separate fixed-height rows.
-    final cmdDmgRow = cmdDmgContent == null
-        ? const SizedBox.shrink()
-        : SizedBox(height: 20, child: cmdDmgContent);
-
-    // Edge cards: effects + cmdDmg share one row — centered when only one is
-    // active, side-by-side when both are active.
-    Widget secondaryRow = const SizedBox.shrink();
-    if (isEdge) {
-      if (effectIconsContent != null && cmdDmgContent != null) {
-        secondaryRow = SizedBox(
-          height: 36,
-          child: Row(
-            children: [
-              Expanded(child: Center(child: effectIconsContent)),
-              Expanded(child: Center(child: cmdDmgContent)),
-            ],
-          ),
-        );
-      } else if (effectIconsContent != null || cmdDmgContent != null) {
-        secondaryRow = SizedBox(
-          height: 36,
-          child: Center(child: effectIconsContent ?? cmdDmgContent!),
-        );
-      }
-    }
-
-    // Life total content — tracker row + life area — wrapped in a RotatedBox so
-    // the player reads it from their seat. Scoped to this child only so the
-    // damage view below is unaffected by the rotation.
+    // Life total view: gesture zone fills the full card; secondary content
+    // (effect badges, commander damage) floats on top at the player's bottom
+    // edge. Effect badge GestureDetectors are higher z-order in the Stack so
+    // they win the gesture arena for their tap targets; the life zone catches
+    // everything else — no conditional margins needed.
     final lifeTotalView = RotatedBox(
       key: const ValueKey('life'),
       quarterTurns: player.quarterTurns,
-      child: Column(
-        mainAxisSize: MainAxisSize.max,
-        // For bottomEdge the tracker row sits at the widget top (outer edge).
-        // For every other seat the card is rotated so trackers go at the bottom.
-        children: isEdge
-            // Edge cards: no inner spacer, combined secondary row saves height.
-            ? [lifeArea, secondaryRow, trackerRow]
-            // Side cards: inner spacer balances effectsRow, keeping life centered.
-            : [const SizedBox(height: 36), lifeArea, effectsRow, cmdDmgRow, trackerRow],
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: _LifeTotalArea(
+              lifeTotal: player.lifeTotal,
+              onLifeChange: widget.onLifeChange,
+              onSwipe: opponents.isNotEmpty
+                  ? () => setState(() => _showingCommanderDamage = true)
+                  : null,
+            ),
+          ),
+          // Commander damage indicators — display only, passes taps through.
+          if (cmdDmgContent != null)
+            Positioned(
+              bottom: 0, left: 0, right: 0, height: 20,
+              child: IgnorePointer(child: Center(child: cmdDmgContent)),
+            ),
+          // Effect badges sit above the damage row (or flush to the bottom
+          // edge when no damage is shown). Their GestureDetectors intercept
+          // taps in their bounds; life buttons handle the rest of the card.
+          if (effectIconsContent != null)
+            Positioned(
+              bottom: cmdDmgContent != null ? 20.0 : 0.0,
+              left: 0, right: 0, height: 36,
+              child: Center(child: effectIconsContent),
+            ),
+        ],
       ),
     );
 
     // The container border stays in screen space regardless of which child is
     // shown. AnimatedSwitcher fades between the rotated life view and the
-    // screen-space damage grid. Background clears to transparent during the
-    // damage view so cell colors render against the dark game background.
+    // screen-space damage grid.
     return Container(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(18),
@@ -260,260 +187,6 @@ class _PlayerCardState extends State<PlayerCard> {
                   onClose: () => setState(() => _showingCommanderDamage = false),
                 )
               : lifeTotalView,
-        ),
-      ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Tracker pill row
-// ---------------------------------------------------------------------------
-
-// Horizontally scrollable tracker pills + manage button (always trailing).
-class _TrackerPillsRow extends StatelessWidget {
-  final List<Tracker> trackers;
-  final Color playerColor;
-  final int quarterTurns;
-  final void Function(String trackerId, int delta) onTrackerChange;
-  final void Function(String trackerId) onTrackerRemove;
-  final void Function(BuildContext context) onManageTap;
-
-  const _TrackerPillsRow({
-    required this.trackers,
-    required this.playerColor,
-    required this.quarterTurns,
-    required this.onTrackerChange,
-    required this.onTrackerRemove,
-    required this.onManageTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: 32,
-      child: Row(
-        children: [
-          Expanded(
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-              itemCount: trackers.length,
-              separatorBuilder: (_, _) => const SizedBox(width: 4),
-              itemBuilder: (context, index) {
-                final tracker = trackers[index];
-                return _TrackerPill(
-                  tracker: tracker,
-                  playerColor: playerColor,
-                  quarterTurns: quarterTurns,
-                  onChange: (delta) => onTrackerChange(tracker.id, delta),
-                  onRemove: () => onTrackerRemove(tracker.id),
-                );
-              },
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.only(right: 6),
-            child: GestureDetector(
-              onTap: () => onManageTap(context),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Icon(Icons.add, size: 13,
-                    color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5)),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// A single tracker pill. Tap = +1. Hold = centered edit dialog.
-class _TrackerPill extends StatelessWidget {
-  final Tracker tracker;
-  final Color playerColor;
-  final int quarterTurns;
-  final void Function(int delta) onChange;
-  final VoidCallback onRemove;
-
-  const _TrackerPill({
-    required this.tracker,
-    required this.playerColor,
-    required this.quarterTurns,
-    required this.onChange,
-    required this.onRemove,
-  });
-
-  void _showOptions(BuildContext context) {
-    showDialog<void>(
-      context: context,
-      builder: (_) => _TrackerEditDialog(
-        tracker: tracker,
-        quarterTurns: quarterTurns,
-        onChange: onChange,
-        onRemove: onRemove,
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final bool hasValue = tracker.value > 0;
-
-    return GestureDetector(
-      onTap: () {
-        triggerHaptic(context);
-        onChange(1);
-      },
-      onLongPress: () => _showOptions(context),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-        decoration: BoxDecoration(
-          color: playerColor.withValues(alpha: 0.25),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: playerColor.withValues(alpha: hasValue ? 0.8 : 0.4),
-            width: 1,
-          ),
-        ),
-        child: Text(
-          hasValue ? '${tracker.icon} ${tracker.value}' : tracker.icon,
-          style: const TextStyle(fontSize: 16, height: 1),
-        ),
-      ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Tracker edit dialog
-// ---------------------------------------------------------------------------
-
-// Centered dialog for adjusting a tracker value.
-// Owns a local _value so the display updates live without closing the dialog.
-class _TrackerEditDialog extends StatefulWidget {
-  final Tracker tracker;
-  final int quarterTurns;
-  final void Function(int delta) onChange;
-  final VoidCallback onRemove;
-
-  const _TrackerEditDialog({
-    required this.tracker,
-    required this.quarterTurns,
-    required this.onChange,
-    required this.onRemove,
-  });
-
-  @override
-  State<_TrackerEditDialog> createState() => _TrackerEditDialogState();
-}
-
-class _TrackerEditDialogState extends State<_TrackerEditDialog> {
-  late int _value;
-
-  @override
-  void initState() {
-    super.initState();
-    _value = widget.tracker.value;
-  }
-
-  void _adjust(int delta) {
-    widget.onChange(delta);
-    setState(() => _value += delta);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Transform.rotate(
-      angle: widget.quarterTurns * pi / 2,
-      child: Dialog(
-        backgroundColor: AppTheme.dialogBg,
-        shape: AppTheme.dialogShape,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 28),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                '${widget.tracker.icon}  ${widget.tracker.name}',
-                style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 24),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  _DialogAdjustButton(label: '−', onTap: () => _adjust(-1)),
-                  Text(
-                    '$_value',
-                    style: const TextStyle(color: Colors.white, fontSize: 48, fontWeight: FontWeight.bold),
-                  ),
-                  _DialogAdjustButton(label: '+', onTap: () => _adjust(1)),
-                ],
-              ),
-              const SizedBox(height: 20),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  GestureDetector(
-                    onTap: () {
-                      _adjust(-_value);
-                      Navigator.pop(context);
-                    },
-                    child: Text(
-                      'Reset',
-                      style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 13),
-                    ),
-                  ),
-                  GestureDetector(
-                    onTap: () {
-                      Navigator.pop(context);
-                      widget.onRemove();
-                    },
-                    child: Text(
-                      'Remove',
-                      style: TextStyle(color: Colors.red.withValues(alpha: 0.6), fontSize: 13),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// +/- button used inside _TrackerEditDialog.
-class _DialogAdjustButton extends StatelessWidget {
-  final String label;
-  final VoidCallback onTap;
-
-  const _DialogAdjustButton({required this.label, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: () {
-        triggerHaptic(context);
-        onTap();
-      },
-      child: Container(
-        width: 52,
-        height: 52,
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.1),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        alignment: Alignment.center,
-        child: Text(
-          label,
-          style: const TextStyle(color: Colors.white, fontSize: 28),
         ),
       ),
     );
@@ -571,7 +244,6 @@ class _LifeTotalAreaState extends State<_LifeTotalArea> {
         child: Stack(
           alignment: Alignment.center,
           children: [
-            // Each button is its own widget with its own independent timer
             Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -579,7 +251,6 @@ class _LifeTotalAreaState extends State<_LifeTotalArea> {
                 Expanded(child: _HoldButton(tapDelta: 1,  holdDelta: 10,  onActivate: _handleLifeChange)),
               ],
             ),
-            // Life total — always centered, never moves
             IgnorePointer(
               child: Text(
                 '${widget.lifeTotal}',
@@ -591,7 +262,6 @@ class _LifeTotalAreaState extends State<_LifeTotalArea> {
                 ),
               ),
             ),
-            // Delta indicator — anchored to the bottom of the Stack
             if (_pendingDelta != 0)
               Positioned(
                 bottom: 0,
@@ -613,8 +283,6 @@ class _LifeTotalAreaState extends State<_LifeTotalArea> {
     if (widget.onSwipe == null) return content;
 
     return GestureDetector(
-      // A fast horizontal drag opens the commander damage view.
-      // _HoldButton only handles taps and long-presses, so no conflict.
       onHorizontalDragEnd: (details) {
         if ((details.primaryVelocity ?? 0).abs() > 300) {
           widget.onSwipe!();
@@ -629,10 +297,6 @@ class _LifeTotalAreaState extends State<_LifeTotalArea> {
 // Commander damage view
 // ---------------------------------------------------------------------------
 
-// Replaces the life total area when the player swipes the card.
-// Mirrors the board layout: each player occupies the same grid slot as on the
-// main screen. The self slot shows an Ok/close cell; opponent slots show a
-// compact damage tracker (tap ±1, hold ±10).
 class _CommanderDamageView extends StatelessWidget {
   final Player self;
   final List<Player> allPlayers;
@@ -665,7 +329,6 @@ class _CommanderDamageView extends StatelessWidget {
     );
   }
 
-  // Opponents in clockwise turn order starting from the seat after self.
   List<Player>? _clockwiseFlatOrder() {
     final pos = self.seatPosition;
     if (pos != SeatPosition.topEdge && pos != SeatPosition.bottomEdge) {
@@ -699,7 +362,6 @@ class _CommanderDamageView extends StatelessWidget {
   }
 }
 
-// The self slot in the commander damage grid — tapping it closes the view.
 class _CmdOkCell extends StatelessWidget {
   final Color color;
   final int quarterTurns;
@@ -736,12 +398,8 @@ class _CmdOkCell extends StatelessWidget {
   }
 }
 
-// An opponent slot in the commander damage grid.
-// Tap: ±1, hold: ±10. Shows current damage + pending delta.
 class _CmdDamageCell extends StatefulWidget {
   final Player opponent;
-  // The player who opened this damage view — provides quarterTurns for text
-  // rotation and the live commanderDamage map for clamping negatives.
   final Player invoker;
   final void Function(int delta) onChange;
 
@@ -761,7 +419,6 @@ class _CmdDamageCellState extends State<_CmdDamageCell> {
 
   void _handleChange(int delta) {
     final current = widget.invoker.commanderDamage[widget.opponent.id] ?? 0;
-    // Commander damage cannot go below 0.
     final clamped = max(delta, -current);
     if (clamped == 0) return;
     widget.onChange(clamped);
@@ -836,8 +493,6 @@ class _CmdDamageCellState extends State<_CmdDamageCell> {
 // Shared hold-button widget
 // ---------------------------------------------------------------------------
 
-// A transparent pressable area with independent hold-repeat logic.
-// Each instance owns its own Timer so simultaneous presses can't interfere.
 class _HoldButton extends StatefulWidget {
   final int tapDelta;
   final int holdDelta;
@@ -854,8 +509,6 @@ class _HoldButton extends StatefulWidget {
 }
 
 class _HoldButtonState extends State<_HoldButton> {
-  // _timer serves double duty: first as the hold-threshold delay, then
-  // replaced with the repeat timer once the threshold fires.
   Timer? _timer;
   bool _holding = false;
 
@@ -874,7 +527,6 @@ class _HoldButtonState extends State<_HoldButton> {
 
   void _onTapUp(TapUpDetails _) {
     if (!_holding) {
-      // Threshold never fired — treat as a tap.
       _timer?.cancel();
       _timer = null;
       triggerHaptic(context);

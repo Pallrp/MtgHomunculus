@@ -180,7 +180,7 @@ class _SetupSheetState extends State<SetupSheet> {
 
   Future<void> _onNewGame() async {
     final settings = GtSettingsScope.of(context);
-    if (settings.confirmNewGame && widget.game.gameStarted) {
+    if (settings.confirmNewGame && widget.game.players.isNotEmpty) {
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(

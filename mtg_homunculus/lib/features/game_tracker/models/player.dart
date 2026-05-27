@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'tracker.dart';
 
 // Where the player sits relative to the device on the table.
 // Drives card rotation and grid placement.
@@ -17,7 +16,6 @@ class Player {
   final String id;
   final Color color;
   final int lifeTotal;
-  final List<Tracker> trackers;
   final SeatPosition seatPosition;
   // commanderDamage: opponentId → cumulative damage received from that opponent's commander.
   // Kept in sync by GameState when players are added or removed.
@@ -27,7 +25,6 @@ class Player {
     required this.id,
     required this.color,
     required this.lifeTotal,
-    this.trackers = const [],
     this.seatPosition = SeatPosition.rightSide,
     this.commanderDamage = const {},
   });
@@ -56,7 +53,6 @@ class Player {
   Player copyWith({
     Color? color,
     int? lifeTotal,
-    List<Tracker>? trackers,
     SeatPosition? seatPosition,
     Map<String, int>? commanderDamage,
   }) =>
@@ -64,7 +60,6 @@ class Player {
         id: id,
         color: color ?? this.color,
         lifeTotal: lifeTotal ?? this.lifeTotal,
-        trackers: trackers ?? this.trackers,
         seatPosition: seatPosition ?? this.seatPosition,
         commanderDamage: commanderDamage ?? this.commanderDamage,
       );
