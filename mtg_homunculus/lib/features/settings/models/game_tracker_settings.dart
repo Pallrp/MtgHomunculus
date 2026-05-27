@@ -12,6 +12,10 @@ class GtSettings {
   final bool confirmNewGame;
   final int holdDurationMs;
   final List<Color> playerColors;
+  // When true, active GameEffects that affect screen colors (e.g. DayNightEffect)
+  // are allowed to override the game tracker's Theme. Structural additions such
+  // as card borders and effect icons are never affected by this setting.
+  final bool adaptiveTheme;
   // Snapshots from SettingsService, kept in sync via AppShell listeners on
   // trackerLibraryNotifier and formatPresetsNotifier.
   final List<Tracker>       trackerLibrary;
@@ -22,6 +26,7 @@ class GtSettings {
     this.confirmNewGame   = false,
     this.holdDurationMs   = 400,
     this.playerColors     = kPlayerColors,
+    this.adaptiveTheme    = true,
     this.trackerLibrary   = const [],
     this.formatPresets    = const [],
   });
@@ -31,6 +36,7 @@ class GtSettings {
     bool?               confirmNewGame,
     int?                holdDurationMs,
     List<Color>?        playerColors,
+    bool?               adaptiveTheme,
     List<Tracker>?      trackerLibrary,
     List<FormatPreset>? formatPresets,
   }) =>
@@ -39,6 +45,7 @@ class GtSettings {
         confirmNewGame:   confirmNewGame   ?? this.confirmNewGame,
         holdDurationMs:   holdDurationMs   ?? this.holdDurationMs,
         playerColors:     playerColors     ?? this.playerColors,
+        adaptiveTheme:    adaptiveTheme    ?? this.adaptiveTheme,
         trackerLibrary:   trackerLibrary   ?? this.trackerLibrary,
         formatPresets:    formatPresets    ?? this.formatPresets,
       );
@@ -49,6 +56,7 @@ class GtSettings {
       other.showZeroTrackers == showZeroTrackers &&
       other.confirmNewGame   == confirmNewGame &&
       other.holdDurationMs   == holdDurationMs &&
+      other.adaptiveTheme    == adaptiveTheme &&
       listEquals(other.playerColors,   playerColors) &&
       listEquals(other.trackerLibrary, trackerLibrary) &&
       listEquals(other.formatPresets,  formatPresets);
@@ -60,6 +68,7 @@ class GtSettings {
         showZeroTrackers,
         confirmNewGame,
         holdDurationMs,
+        adaptiveTheme,
         Object.hashAll(playerColors),
         Object.hashAll(trackerLibrary),
         Object.hashAll(formatPresets),

@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import '../../../app_settings_scope.dart';
 import '../../../app_theme.dart';
+import '../models/game_effect.dart';
 import '../models/player.dart';
 import '../models/players_by_position.dart';
 import '../models/tracker.dart';
@@ -22,6 +23,10 @@ class PlayerCard extends StatefulWidget {
   final void Function(int oldIndex, int newIndex) onTrackerReorder;
   // attackerId is the opponent whose commander dealt the damage.
   final void Function(String attackerId, int delta) onCommanderDamage;
+  // Pre-filtered by GameGrid — only effects for this player.
+  final List<PlayerEffect> activeEffects;
+  // Called when the user taps an effect badge on the card.
+  final void Function(BuildContext context, PlayerEffect effect)? onEffectTap;
 
   const PlayerCard({
     super.key,
@@ -34,6 +39,8 @@ class PlayerCard extends StatefulWidget {
     required this.onTrackerReorder,
     required this.onCommanderDamage,
     this.isActive = false,
+    this.activeEffects = const [],
+    this.onEffectTap,
   });
 
   @override
@@ -69,6 +76,11 @@ class _PlayerCardState extends State<PlayerCard> {
     final borderColor = widget.isActive
         ? _lighten(player.color)
         : player.color.withValues(alpha: 0.6);
+    final borderWidth = widget.isActive ? 3.0 : 1.5;
+    final outlineColor = widget.activeEffects
+        .map((e) => e.cardOutlineColor)
+        .whereType<Color>()
+        .firstOrNull;
 
     final settings = GtSettingsScope.of(context);
     final visibleTrackers = settings.showZeroTrackers
@@ -99,6 +111,36 @@ class _PlayerCardState extends State<PlayerCard> {
       ),
     );
 
+    final isEdge = player.seatPosition == SeatPosition.topEdge ||
+        player.seatPosition == SeatPosition.bottomEdge;
+
+    // Reusable icon content — null when nothing to show.
+    final effectIconsContent = widget.activeEffects.isEmpty
+        ? null
+        : Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final effect in widget.activeEffects)
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: widget.onEffectTap != null
+                      ? () => widget.onEffectTap!(context, effect)
+                      : null,
+                  child: SizedBox(
+                    width: 44,
+                    height: 36,
+                    child: Center(
+                      child: effect.cardBadge(context),
+                    ),
+                  ),
+                ),
+            ],
+          );
+
+    // Fixed height always reserved for side cards — prevents life total shift.
+    final effectsRow = SizedBox(height: 36, child: effectIconsContent);
+
     final lifeArea = Expanded(
       child: _LifeTotalArea(
         lifeTotal: player.lifeTotal,
@@ -115,33 +157,58 @@ class _PlayerCardState extends State<PlayerCard> {
     final damagedBy = opponents
         .where((opp) => (player.commanderDamage[opp.id] ?? 0) > 0)
         .toList();
-    final cmdDmgRow = damagedBy.isEmpty
-        ? const SizedBox.shrink()
-        : SizedBox(
-            height: 20,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: damagedBy.map((opp) => Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.shield, color: opp.color, size: 13),
-                    const SizedBox(width: 2),
-                    Text(
-                      '${player.commanderDamage[opp.id]}',
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.onSurface,
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                        height: 1,
-                      ),
+    final cmdDmgContent = damagedBy.isEmpty
+        ? null
+        : Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: damagedBy.map((opp) => Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.shield, color: opp.color, size: 13),
+                  const SizedBox(width: 2),
+                  Text(
+                    '${player.commanderDamage[opp.id]}',
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurface,
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      height: 1,
                     ),
-                  ],
-                ),
-              )).toList(),
-            ),
+                  ),
+                ],
+              ),
+            )).toList(),
           );
+
+    // Side cards: separate fixed-height rows.
+    final cmdDmgRow = cmdDmgContent == null
+        ? const SizedBox.shrink()
+        : SizedBox(height: 20, child: cmdDmgContent);
+
+    // Edge cards: effects + cmdDmg share one row — centered when only one is
+    // active, side-by-side when both are active.
+    Widget secondaryRow = const SizedBox.shrink();
+    if (isEdge) {
+      if (effectIconsContent != null && cmdDmgContent != null) {
+        secondaryRow = SizedBox(
+          height: 36,
+          child: Row(
+            children: [
+              Expanded(child: Center(child: effectIconsContent)),
+              Expanded(child: Center(child: cmdDmgContent)),
+            ],
+          ),
+        );
+      } else if (effectIconsContent != null || cmdDmgContent != null) {
+        secondaryRow = SizedBox(
+          height: 36,
+          child: Center(child: effectIconsContent ?? cmdDmgContent!),
+        );
+      }
+    }
 
     // Life total content — tracker row + life area — wrapped in a RotatedBox so
     // the player reads it from their seat. Scoped to this child only so the
@@ -153,9 +220,11 @@ class _PlayerCardState extends State<PlayerCard> {
         mainAxisSize: MainAxisSize.max,
         // For bottomEdge the tracker row sits at the widget top (outer edge).
         // For every other seat the card is rotated so trackers go at the bottom.
-        children: player.seatPosition == SeatPosition.bottomEdge
-            ? [trackerRow, cmdDmgRow, lifeArea]
-            : [lifeArea, cmdDmgRow, trackerRow],
+        children: isEdge
+            // Edge cards: no inner spacer, combined secondary row saves height.
+            ? [lifeArea, secondaryRow, trackerRow]
+            // Side cards: inner spacer balances effectsRow, keeping life centered.
+            : [const SizedBox(height: 36), lifeArea, effectsRow, cmdDmgRow, trackerRow],
       ),
     );
 
@@ -165,26 +234,33 @@ class _PlayerCardState extends State<PlayerCard> {
     // damage view so cell colors render against the dark game background.
     return Container(
       decoration: BoxDecoration(
-        color: _showingCommanderDamage
-            ? Colors.transparent
-            : player.color.withValues(alpha: 0.2),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(18),
         border: Border.all(
-          color: borderColor,
-          width: widget.isActive ? 3.0 : 1.5,
+          color: outlineColor ?? Colors.transparent,
+          width: 2,
         ),
       ),
-      child: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 200),
-        child: _showingCommanderDamage && opponents.isNotEmpty
-            ? _CommanderDamageView(
-                key: const ValueKey('cmd'),
-                self: player,
-                allPlayers: widget.allPlayers,
-                onDamageChange: widget.onCommanderDamage,
-                onClose: () => setState(() => _showingCommanderDamage = false),
-              )
-            : lifeTotalView,
+      padding: const EdgeInsets.all(2),
+      child: Container(
+        decoration: BoxDecoration(
+          color: _showingCommanderDamage
+              ? Colors.transparent
+              : player.color.withValues(alpha: 0.2),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: borderColor, width: borderWidth),
+        ),
+        child: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 200),
+          child: _showingCommanderDamage && opponents.isNotEmpty
+              ? _CommanderDamageView(
+                  key: const ValueKey('cmd'),
+                  self: player,
+                  allPlayers: widget.allPlayers,
+                  onDamageChange: widget.onCommanderDamage,
+                  onClose: () => setState(() => _showingCommanderDamage = false),
+                )
+              : lifeTotalView,
+        ),
       ),
     );
   }
@@ -490,9 +566,8 @@ class _LifeTotalAreaState extends State<_LifeTotalArea> {
   @override
   Widget build(BuildContext context) {
     final content = Padding(
-      padding: const EdgeInsets.fromLTRB(4, 4, 4, 4),
-      child: SizedBox(
-        height: 160,
+      padding: const EdgeInsets.fromLTRB(4, 0, 4, 0),
+      child: SizedBox.expand(
         child: Stack(
           alignment: Alignment.center,
           children: [

@@ -1,6 +1,10 @@
-import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
+import '../models/roulette_animation.dart';
+
+// Visual clearance around the diamond for portal-scroll strips.
+// 64 px square rotated 45° has a diagonal of ~90 px; add breathing room.
+const double kPassDiamondClearance = 80.0;
 
 // The diamond button overlaid on the game grid.
 //
@@ -25,6 +29,12 @@ class PassDiamond extends StatefulWidget {
   // Called each tick of the GAMBA animation with the currently highlighted index.
   // Use this to flash a border on the corresponding PlayerCard in GameGrid.
   final void Function(int index)? onGambaHighlight;
+  // Called when a directional swipe is detected on the diamond.
+  // Axis.horizontal = left/right swipe; Axis.vertical = up/down swipe.
+  final void Function(Axis)? onSwipe;
+  // When non-null, overrides the computed label (e.g. "Cancel" during pick overlay).
+  // Swipe gestures are suppressed while an override label is active.
+  final String? overrideLabel;
 
   const PassDiamond({
     super.key,
@@ -33,6 +43,8 @@ class PassDiamond extends StatefulWidget {
     required this.onGamba,
     this.choosingStarter = false,
     this.onGambaHighlight,
+    this.onSwipe,
+    this.overrideLabel,
   });
 
   @override
@@ -42,7 +54,8 @@ class PassDiamond extends StatefulWidget {
 class _PassDiamondState extends State<PassDiamond>
     with SingleTickerProviderStateMixin {
   bool _animating = false;
-  Timer? _timer;
+  final RouletteAnimation _roulette = RouletteAnimation();
+  Axis? _lockedAxis;
 
   late final AnimationController _pressCtrl;
   late final Animation<double> _scaleAnim;
@@ -61,9 +74,33 @@ class _PassDiamondState extends State<PassDiamond>
 
   @override
   void dispose() {
-    _timer?.cancel();
+    _roulette.cancel();
     _pressCtrl.dispose();
     super.dispose();
+  }
+
+  void _onPanStart(DragStartDetails _) {
+    _lockedAxis = null;
+    _pressCtrl.reverse();
+  }
+
+  void _onPanUpdate(DragUpdateDetails details) {
+    if (_lockedAxis != null) return;
+    final dx = details.delta.dx.abs();
+    final dy = details.delta.dy.abs();
+    if (dx > 3 || dy > 3) {
+      _lockedAxis = dx >= dy ? Axis.horizontal : Axis.vertical;
+    }
+  }
+
+  void _onPanEnd(DragEndDetails details) {
+    final axis = _lockedAxis;
+    _lockedAxis = null;
+    if (axis == null || widget.onSwipe == null || _animating || widget.overrideLabel != null) return;
+    final velocity = axis == Axis.horizontal
+        ? details.velocity.pixelsPerSecond.dx.abs()
+        : details.velocity.pixelsPerSecond.dy.abs();
+    if (velocity > 200) widget.onSwipe!(axis);
   }
 
   void _handleTap() {
@@ -79,39 +116,22 @@ class _PassDiamondState extends State<PassDiamond>
     if (_animating) return;
     setState(() => _animating = true);
 
-    final order = widget.playerOrder;
-    final n = order.length;
-    final random = Random();
-    final pickSlot = random.nextInt(n); // index into order, not a player index
-    // Total steps: a few full cycles plus landing exactly on pickSlot.
-    // +1 so the last tick highlights the winner before onGamba fires.
-    final totalCycles = 3 + random.nextInt(2); // 3–4 full loops
-    final totalSteps = totalCycles * n + pickSlot + 1;
-
-    int step = 0;
-    // Sweep clockwise through order; decelerate over the last 40% of steps.
-    void tick() {
-      if (!mounted) return;
-      widget.onGambaHighlight?.call(order[step % n]);
-      step++;
-      if (step >= totalSteps) {
-        _timer?.cancel();
+    // Sweep clockwise through player order — RouletteAnimation handles the
+    // deceleration curve and random pick identically to the Random Player tool.
+    _roulette.start<int>(
+      items: widget.playerOrder,
+      onHighlight: (index) => widget.onGambaHighlight?.call(index),
+      onComplete: (index) {
         setState(() => _animating = false);
-        widget.onGamba(order[pickSlot]);
-        return;
-      }
-      final progress = step / totalSteps;
-      final intervalMs = progress < 0.6
-          ? 80
-          : (80 + ((progress - 0.6) / 0.4) * 420).round();
-      _timer = Timer(Duration(milliseconds: intervalMs), tick);
-    }
-
-    _timer = Timer(const Duration(milliseconds: 100), tick);
+        widget.onGamba(index);
+      },
+      isMounted: () => mounted,
+    );
   }
 
   String get _label {
     if (_animating) return '';
+    if (widget.overrideLabel != null) return widget.overrideLabel!;
     if (widget.choosingStarter) return 'GAMBA';
     return widget.playerOrder.length == 1 ? 'Reset' : 'Pass';
   }
@@ -125,12 +145,16 @@ class _PassDiamondState extends State<PassDiamond>
         _handleTap();
       },
       onTapCancel: () => _pressCtrl.reverse(),
+      onPanStart: _onPanStart,
+      onPanUpdate: _onPanUpdate,
+      onPanEnd: _onPanEnd,
       child: ScaleTransition(
         scale: _scaleAnim,
         child: _DiamondShape(
           label: _label,
           isAnimating: _animating,
           choosingStarter: widget.choosingStarter,
+          isCancel: widget.overrideLabel != null,
         ),
       ),
     );
@@ -141,18 +165,22 @@ class _DiamondShape extends StatelessWidget {
   final String label;
   final bool isAnimating;
   final bool choosingStarter;
+  final bool isCancel;
 
   const _DiamondShape({
     required this.label,
     required this.isAnimating,
     required this.choosingStarter,
+    this.isCancel = false,
   });
 
   @override
   Widget build(BuildContext context) {
     final color = choosingStarter
         ? const Color(0xFFE67E22) // orange for GAMBA
-        : const Color(0xFF3A3A3A);
+        : isCancel
+            ? const Color(0xFF7A2D2D) // dark red for cancel/pick mode
+            : const Color(0xFF3A3A3A);
 
     return Transform.rotate(
       angle: pi / 4, // 45° to make a diamond from a square

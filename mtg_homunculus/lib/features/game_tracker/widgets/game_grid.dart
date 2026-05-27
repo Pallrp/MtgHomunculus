@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
+import '../models/game_effect.dart';
 import '../models/game_state.dart';
 import '../models/player.dart';
 import '../models/players_by_position.dart';
 import '../models/tracker.dart';
+import '../models/toolbelt_tool.dart';
+import '../models/toolbelt_tools.dart';
+import 'gt_game_scope.dart';
 import 'player_card.dart';
 import 'player_grid_layout.dart';
 
@@ -27,6 +31,14 @@ class GameGrid extends StatelessWidget {
   final OnTrackerReorder onTrackerReorder;
   final OnCommanderDamage onCommanderDamage;
   final OnPlayerTap? onPlayerTap;
+  // Non-null while a tool-driven player-pick overlay is active.
+  final PlayerPickRequest? playerPickRequest;
+  // Player ID currently highlighted during the Random Player roulette spin.
+  // Null when no roulette is running. Absorbs pointer to prevent accidental taps.
+  final String? randomHighlightId;
+  // Player ID who won the Random Player roulette. Shown with winner border
+  // until the user taps "Done" on the diamond. Does not absorb pointer.
+  final String? randomWinnerId;
 
   const GameGrid({
     super.key,
@@ -40,6 +52,9 @@ class GameGrid extends StatelessWidget {
     this.choosingStarter = false,
     this.gambaHighlightIndex = -1,
     this.onPlayerTap,
+    this.playerPickRequest,
+    this.randomHighlightId,
+    this.randomWinnerId,
   });
 
   @override
@@ -65,17 +80,31 @@ class GameGrid extends StatelessWidget {
     );
   }
 
+  void _onEffectTap(BuildContext context, PlayerEffect effect) {
+    for (final tool in kToolbeltTools) {
+      if (tool is EffectTool && tool.handlesEffect(effect)) {
+        tool.onTap(context);
+        return;
+      }
+    }
+  }
+
   Widget _buildCard(Player player) {
     final index = game.players.indexOf(player);
     final isActive = game.activePlayerIndex == index;
 
+    final isPickMode = playerPickRequest != null;
+    // Absorb inner card gestures during any overlay that needs a clean tap target:
+    // WHO'S STARTING, player-pick, or Random Player roulette spin.
+    final absorbing = choosingStarter || isPickMode || randomHighlightId != null;
+
     Widget card = Padding(
       padding: const EdgeInsets.all(4),
       // AbsorbPointer blocks all inner gesture detectors (life total buttons,
-      // tracker pills, etc.) during WHO'S STARTING so only the outer tap
-      // handler for player selection fires.
+      // tracker pills, etc.) during WHO'S STARTING and pick overlays so only
+      // the outer tap handler fires.
       child: AbsorbPointer(
-        absorbing: choosingStarter,
+        absorbing: absorbing,
         child: PlayerCard(
           player: player,
           allPlayers: game.players,
@@ -86,14 +115,23 @@ class GameGrid extends StatelessWidget {
           onTrackerRemove: (id) => onTrackerRemove(player.id, id),
           onTrackerReorder: (o, n) => onTrackerReorder(player.id, o, n),
           onCommanderDamage: (attackerId, delta) => onCommanderDamage(player.id, attackerId, delta),
+          activeEffects: game.effectsForPlayer(player.id),
+          onEffectTap: _onEffectTap,
         ),
       ),
     );
 
+    // During pick overlay — all cards pulse; tap = pick that player.
+    if (isPickMode) {
+      card = GestureDetector(
+        onTap: () => playerPickRequest!.onPick(player.id),
+        child: _PulsingBorder(color: player.color, child: card),
+      );
+    }
     // During WHO'S STARTING, wrap with a tap detector and a border effect:
     //   • no animation yet  → all cards pulse (player is deciding)
     //   • animation running → only the current highlight flashes; others plain
-    if (choosingStarter && onPlayerTap != null) {
+    else if (choosingStarter && onPlayerTap != null) {
       final isGambaActive = gambaHighlightIndex != -1;
       final isGambaFlash  = gambaHighlightIndex == index;
       card = GestureDetector(
@@ -104,6 +142,16 @@ class GameGrid extends StatelessWidget {
                 ? card
                 : _PulsingBorder(color: player.color, child: card),
       );
+    }
+
+    // Random Player roulette overlays — applied last so they sit outermost.
+    // These states don't coexist with pick-mode or choosingStarter, so there
+    // is no visual conflict with the borders above.
+    if (randomHighlightId == player.id) {
+      card = _RandomSpinBorder(color: player.color, child: card);
+    }
+    if (randomWinnerId == player.id) {
+      card = _RandomWinnerBorder(color: player.color, child: card);
     }
 
     return card;
@@ -176,6 +224,54 @@ class _PulsingBorderState extends State<_PulsingBorder>
         child: child,
       ),
       child: widget.child,
+    );
+  }
+}
+
+// Thin, semi-transparent border shown on the card currently passing through
+// the Random Player roulette. Deliberately subtle — signals "still deciding".
+class _RandomSpinBorder extends StatelessWidget {
+  final Color color;
+  final Widget child;
+  const _RandomSpinBorder({required this.color, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: color.withValues(alpha: 0.55),
+          width: 2,
+        ),
+      ),
+      child: child,
+    );
+  }
+}
+
+// Bold border with a coloured glow shown on the Random Player roulette winner.
+// High visual weight so players immediately read it as "the result".
+class _RandomWinnerBorder extends StatelessWidget {
+  final Color color;
+  final Widget child;
+  const _RandomWinnerBorder({required this.color, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color, width: 4),
+        boxShadow: [
+          BoxShadow(
+            color: color.withValues(alpha: 0.45),
+            blurRadius: 12,
+            spreadRadius: 2,
+          ),
+        ],
+      ),
+      child: child,
     );
   }
 }

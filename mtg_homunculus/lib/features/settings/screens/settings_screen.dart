@@ -238,6 +238,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _updateGt(_gt.copyWith(confirmNewGame: v));
           },
         ),
+        SettingToggle(
+          label: 'Adaptive theme',
+          subtitle: 'Allow active effects like Day/Night to change the visual theme',
+          value: _gt.adaptiveTheme,
+          onChanged: (v) {
+            widget.service.setAdaptiveTheme(v);
+            _updateGt(_gt.copyWith(adaptiveTheme: v));
+          },
+        ),
         SettingSegment<HoldSensitivity>(
           label: 'Hold sensitivity',
           options: HoldSensitivity.values,

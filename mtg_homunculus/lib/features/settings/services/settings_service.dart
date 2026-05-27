@@ -60,6 +60,7 @@ class SettingsService {
 
   void setShowZeroTrackers(bool v)         => _prefs.setBool('gt.showZeroTrackers', v);
   void setConfirmNewGame(bool v)           => _prefs.setBool('gt.confirmNewGame', v);
+  void setAdaptiveTheme(bool v)            => _prefs.setBool('gt.adaptiveTheme', v);
   void setHoldSensitivity(HoldSensitivity v) =>
       _prefs.setString('gt.holdSensitivity', v.name);
   void setPlayerColors(List<Color> colors) =>
@@ -211,6 +212,7 @@ class SettingsService {
     return GtSettings(
       showZeroTrackers: _prefs.getBool('gt.showZeroTrackers') ?? true,
       confirmNewGame:   _prefs.getBool('gt.confirmNewGame') ?? false,
+      adaptiveTheme:    _prefs.getBool('gt.adaptiveTheme') ?? true,
       holdDurationMs:   sensitivity.durationMs,
       playerColors:     colors,
       trackerLibrary:   _trackerLibrary.value,

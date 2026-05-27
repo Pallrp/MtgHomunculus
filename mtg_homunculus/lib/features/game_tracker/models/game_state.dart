@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'game_effect.dart';
 import 'player.dart';
 import 'tracker.dart';
 
@@ -18,6 +19,7 @@ class GameState {
   final int activePlayerIndex;
   final bool gameStarted;
   final bool choosingStarter;
+  final List<GameEffect> effects;
 
   const GameState({
     required this.players,
@@ -25,6 +27,7 @@ class GameState {
     this.activePlayerIndex = 0,
     this.gameStarted = false,
     this.choosingStarter = false,
+    this.effects = const [],
   });
 
   // The state the app opens with: one player, not yet started.
@@ -46,6 +49,7 @@ class GameState {
     int? activePlayerIndex,
     bool? gameStarted,
     bool? choosingStarter,
+    List<GameEffect>? effects,
   }) =>
       GameState(
         players: players ?? this.players,
@@ -53,7 +57,37 @@ class GameState {
         activePlayerIndex: activePlayerIndex ?? this.activePlayerIndex,
         gameStarted: gameStarted ?? this.gameStarted,
         choosingStarter: choosingStarter ?? this.choosingStarter,
+        effects: effects ?? this.effects,
       );
+
+  // ---------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // Effect helpers
+  // ---------------------------------------------------------------------------
+
+  // Replace any existing effect of the same runtime type, then append.
+  GameState setEffect(GameEffect effect) {
+    final rest = effects.where((e) => e.runtimeType != effect.runtimeType).toList();
+    return copyWith(effects: [...rest, effect]);
+  }
+
+  GameState clearEffect<T extends GameEffect>() =>
+      copyWith(effects: effects.where((e) => e is! T).toList());
+
+  // Pre-filtered list for one player — passed to PlayerCard by GameGrid.
+  List<PlayerEffect> effectsForPlayer(String playerId) =>
+      effects.whereType<PlayerEffect>().where((e) => e.playerId == playerId).toList();
+
+  GameState _applyTurnPassedToEffects() {
+    final updated = effects
+        .map((e) => e.onTurnPassed())
+        .whereType<GameEffect>()
+        .toList();
+    return copyWith(effects: updated);
+  }
+
+  DayNightEffect? get dayNight => effects.whereType<DayNightEffect>().firstOrNull;
+  StormEffect?    get storm    => effects.whereType<StormEffect>().firstOrNull;
 
   // ---------------------------------------------------------------------------
   // Player management
@@ -217,7 +251,8 @@ class GameState {
                   .toList(),
             ))
         .toList();
-    return copyWith(players: updated, activePlayerIndex: nextIndex);
+    return copyWith(players: updated, activePlayerIndex: nextIndex)
+        ._applyTurnPassedToEffects();
   }
 
   // Set the active player directly (used by WHO'S STARTING? selection).
