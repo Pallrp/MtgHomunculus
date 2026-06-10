@@ -1,3 +1,5 @@
+import 'dart:ui' show PlatformDispatcher;
+
 import 'package:flutter/material.dart';
 // ignore: unnecessary_import — explicit for debugPaintSizeEnabled (wireframe mode)
 import 'package:flutter/rendering.dart';
@@ -9,9 +11,32 @@ import 'features/settings/models/app_settings.dart';
 import 'features/settings/models/game_tracker_settings.dart';
 import 'features/settings/models/setting_enums.dart';
 import 'features/settings/services/settings_service.dart';
-
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // ---------------------------------------------------------------------------
+  // Global error hooks — analogous to server-side exception middleware.
+  //
+  // FlutterError.onError   : widget build/layout/painting errors.
+  // PlatformDispatcher     : all other uncaught Dart errors (incl. async).
+  //
+  // Both log via AppLogger then delegate to the default Flutter handler so the
+  // red error screen still appears in debug mode.
+  // ---------------------------------------------------------------------------
+  FlutterError.onError = (FlutterErrorDetails details) {
+    AppLogger.e(
+      'Flutter error [${details.library ?? "unknown"}]',
+      error:      details.exception,
+      stackTrace: details.stack,
+    );
+    FlutterError.presentError(details); // preserves red screen in debug
+  };
+
+  PlatformDispatcher.instance.onError = (Object error, StackTrace stack) {
+    AppLogger.e('Uncaught error', error: error, stackTrace: stack);
+    return true; // handled — suppresses the default crash
+  };
+
   // debugPaintSizeEnabled = false; // set true to overlay widget bounds (wireframe mode)
   // Load settings here — platform channel is guaranteed ready after
   // ensureInitialized(), eliminating any cold-start stall risk.

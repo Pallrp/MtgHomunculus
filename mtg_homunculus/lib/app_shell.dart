@@ -6,6 +6,7 @@ import 'sub_app.dart';
 import 'features/game_tracker/models/default_formats.dart';
 import 'features/game_tracker/screens/game_tracker_screen.dart';
 import 'core/logging/app_logger.dart';
+import 'features/card_lookup/screens/listing_home_screen.dart';
 import 'features/settings/models/game_tracker_settings.dart';
 import 'features/settings/models/setting_enums.dart';
 import 'features/settings/screens/settings_screen.dart';
@@ -129,6 +130,15 @@ class _AppShellState extends State<AppShell> {
     );
   }
 
+  void _openCardLookup() {
+    Navigator.push<void>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const ListingHomeScreen(),
+      ),
+    );
+  }
+
   // ---------------------------------------------------------------------------
   // Build
   // ---------------------------------------------------------------------------
@@ -143,8 +153,9 @@ class _AppShellState extends State<AppShell> {
           Offstage(
             offstage: _activeSubApp != SubApp.gameTracker,
             child: GameTrackerScreen(
-              settings:      _gt,
-              onSettingsTap: _openSettings,
+              settings:         _gt,
+              onSettingsTap:    _openSettings,
+              onCardLookupTap:  _openCardLookup,
             ),
           ),
 

@@ -13,10 +13,12 @@ import '../widgets/toolbelt_strip.dart';
 class GameTrackerScreen extends StatefulWidget {
   final GtSettings settings;
   final VoidCallback? onSettingsTap;
+  final VoidCallback? onCardLookupTap;
   const GameTrackerScreen({
     super.key,
     this.settings = const GtSettings(),
     this.onSettingsTap,
+    this.onCardLookupTap,
   });
 
   @override
@@ -205,6 +207,11 @@ class _GameTrackerScreenState extends State<GameTrackerScreen>
               icon: const Icon(Icons.apps_rounded),
               tooltip: 'Selection',
               onPressed: () {},
+            ),
+            IconButton(
+              icon: const Icon(Icons.search_rounded),
+              tooltip: 'Card Lookup',
+              onPressed: widget.onCardLookupTap,
             ),
             IconButton(
               icon: const Icon(Icons.settings_outlined),
