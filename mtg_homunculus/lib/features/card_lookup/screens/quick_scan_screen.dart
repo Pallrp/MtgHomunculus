@@ -61,7 +61,7 @@ class _QuickScanScreenState extends State<QuickScanScreen> {
               child: SafeArea(
                 top: false,
                 child: Padding(
-                  padding: const EdgeInsets.only(bottom: 24),
+                  padding: const EdgeInsets.symmetric(vertical: 16),
                   child: Center(
                     child: CaptureButton(
                       detecting: _detecting,

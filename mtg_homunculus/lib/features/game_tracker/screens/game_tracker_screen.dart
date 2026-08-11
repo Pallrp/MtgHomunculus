@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../core/ui/safe_screen.dart';
 import '../models/game_state.dart';
 import '../models/player.dart';
 import '../models/roulette_animation.dart';
@@ -220,16 +221,17 @@ class _GameTrackerScreenState extends State<GameTrackerScreen>
             ),
           ],
         ),
-        body: GtGameScope(
-          game: _game,
-          onGameChanged: (g) => setState(() => _game = g),
-          playerPickRequest: _pickRequest,
-          onPickRequestChanged: (req) {
-            setState(() => _pickRequest = req);
-            if (req != null) _closeToolbelt();
-          },
-          onStartRandomRoulette: _startRandomRoulette,
-          child: LayoutBuilder(
+        body: SafeScreen(
+          child: GtGameScope(
+            game: _game,
+            onGameChanged: (g) => setState(() => _game = g),
+            playerPickRequest: _pickRequest,
+            onPickRequestChanged: (req) {
+              setState(() => _pickRequest = req);
+              if (req != null) _closeToolbelt();
+            },
+            onStartRandomRoulette: _startRandomRoulette,
+            child: LayoutBuilder(
             builder: (_, constraints) {
               final centerX  = constraints.maxWidth / 2;
               final availableH = constraints.maxHeight - kSetupStripHeight;
@@ -303,6 +305,7 @@ class _GameTrackerScreenState extends State<GameTrackerScreen>
                 },
               );
             },
+          ),
           ),
         ),
       ),

@@ -254,6 +254,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
               },
               onCapture: () => _scannerKey.currentState?.capture(),
               onReset:   () => _scannerKey.currentState?.reset(),
+              onExportCsv: _exportCsv,
             ),
           ),
 
@@ -275,23 +276,6 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
             ),
           ),
 
-          // Export button overlaid top-right — disabled when listing is empty.
-          Positioned(
-            top: 0, right: 0,
-            child: SafeArea(
-              bottom: false,
-              child: Padding(
-                padding: const EdgeInsets.all(6),
-                child: IconButton(
-                  icon:      const Icon(Icons.share_rounded),
-                  color:     Colors.white,
-                  style:     IconButton.styleFrom(backgroundColor: Colors.black45),
-                  tooltip:   'Export as CSV',
-                  onPressed: _listing!.cards.isNotEmpty ? _exportCsv : null,
-                ),
-              ),
-            ),
-          ),
         ],
       ),
     );
@@ -315,6 +299,7 @@ class _ListingPanel extends StatelessWidget {
   final void Function(String id)                   onCardTap;
   final VoidCallback                               onCapture;
   final VoidCallback                               onReset;
+  final VoidCallback                               onExportCsv;
 
   const _ListingPanel({
     required this.listing,
@@ -329,6 +314,7 @@ class _ListingPanel extends StatelessWidget {
     required this.onCardTap,
     required this.onCapture,
     required this.onReset,
+    required this.onExportCsv,
   });
 
   // Half the CaptureButton height — the button straddles this offset so its
@@ -373,16 +359,20 @@ class _ListingPanel extends StatelessWidget {
         // anywhere — header or card list — expands / collapses the sheet.
         Positioned(
           top: _buttonHalf, left: 0, right: 0, bottom: 0,
-          child: Container(
-            clipBehavior: Clip.antiAlias,
-            decoration: BoxDecoration(
-              color:        cs.surface,
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-              boxShadow:    const [BoxShadow(color: Colors.black38, blurRadius: 10)],
-            ),
-            child: CustomScrollView(
-              controller: scrollController,
-              slivers: [
+          child: SafeArea(
+            top: false,
+            left: false,
+            right: false,
+            child: Container(
+              clipBehavior: Clip.antiAlias,
+              decoration: BoxDecoration(
+                color:        cs.surface,
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+                boxShadow:    const [BoxShadow(color: Colors.black38, blurRadius: 10)],
+              ),
+              child: CustomScrollView(
+                controller: scrollController,
+                slivers: [
                 // Header — top padding clears the button's lower half so the
                 // title text never hides behind it.
                 SliverToBoxAdapter(
@@ -401,6 +391,14 @@ class _ListingPanel extends StatelessWidget {
                           '${listing.cardCount} copy(s)',
                           style: Theme.of(context).textTheme.bodySmall
                               ?.copyWith(color: cs.onSurfaceVariant),
+                        ),
+                        const SizedBox(width: 8),
+                        IconButton(
+                          icon:      const Icon(Icons.share_rounded),
+                          tooltip:   'Export as CSV',
+                          onPressed: listing.cards.isNotEmpty ? onExportCsv : null,
+                          constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                          padding:   EdgeInsets.zero,
                         ),
                       ],
                     ),
@@ -437,6 +435,7 @@ class _ListingPanel extends StatelessWidget {
                     ),
                   ),
               ],
+              ),
             ),
           ),
         ),
