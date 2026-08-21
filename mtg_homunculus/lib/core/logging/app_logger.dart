@@ -25,6 +25,7 @@ class AppLogger {
 
     if (!_initialized) {
       _initialized = true;
+      _clearLogFile(); // Fresh log on each app startup
       _rotateIfNeeded();
     }
 
@@ -77,6 +78,17 @@ class AppLogger {
       output:  outputs.length == 1 ? outputs.first : MultiOutput(outputs),
       printer: SimplePrinter(colors: false, printTime: true),
     );
+  }
+
+  static void _clearLogFile() {
+    try {
+      final file = File(_logFilePath);
+      if (file.existsSync()) {
+        file.deleteSync();
+      }
+    } catch (_) {
+      // Clear failure is non-fatal — continue with existing file.
+    }
   }
 
   static void _rotateIfNeeded() {

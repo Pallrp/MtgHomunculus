@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -8,6 +9,7 @@ import 'package:permission_handler/permission_handler.dart';
 
 import '../../../core/logging/app_logger.dart';
 import '../models/detector_params.dart';
+import '../models/rotated_card_rect.dart';
 import '../models/scan_result.dart';
 import '../models/scryfall_card.dart';
 import '../services/card_detector.dart';
@@ -111,18 +113,18 @@ class ScannerOverlayState extends State<ScannerOverlay> {
   PermissionStatus   _cameraStatus = PermissionStatus.denied;
 
   // ── Live mode ─────────────────────────────────────────────────────────────
-  CameraImage?  _lastFrame;   // most recent raw YUV frame from stream
-  List<ui.Rect> _liveRects  = [];
-  Size?         _frameSize;  // sensor frame dimensions (width × height)
-  bool          _canProcess = true;
+  CameraImage?           _lastFrame;   // most recent raw YUV frame from stream
+  List<RotatedCardRect>  _liveRects  = [];
+  Size?                  _frameSize;   // sensor frame dimensions (width × height)
+  bool                   _canProcess = true;
 
   // ── Frozen mode ───────────────────────────────────────────────────────────
-  _Phase            _phase           = _Phase.live;
-  bool              _capturing       = false;  // true while stopping stream + taking picture
-  XFile?            _capturedPhoto;
-  List<ui.Rect>     _frozenRects     = [];
-  List<ScanResult?> _scanResults     = [];     // null slot = spinner
-  bool              _pipelineRunning = false;
+  _Phase                _phase           = _Phase.live;
+  bool                  _capturing       = false;  // true while stopping stream + taking picture
+  XFile?                _capturedPhoto;
+  List<RotatedCardRect> _frozenRects     = [];
+  List<ScanResult?>     _scanResults     = [];     // null slot = spinner
+  bool                  _pipelineRunning = false;
 
   // ── Tuning / debug ────────────────────────────────────────────────────────
   bool           _tuningOpen  = false;
@@ -234,8 +236,8 @@ class ScannerOverlayState extends State<ScannerOverlay> {
       _canProcess = false;
       _lastFrame  = frame;
 
-      List<ui.Rect> rects;
-      Uint8List?    edgeMap;
+      List<RotatedCardRect> rects;
+      Uint8List?            edgeMap;
       if (_showEdgeMap) {
         (rects, edgeMap) = await CardDetector.detectBordersDebug(
           frame,
@@ -268,6 +270,8 @@ class ScannerOverlayState extends State<ScannerOverlay> {
     try { _controller!.stopImageStream(); } catch (_) {}
   }
 
+  /// Calculate the crop offset for the camera preview based on aspect ratios.
+  ///
   // ---------------------------------------------------------------------------
   // Capture
   // ---------------------------------------------------------------------------
@@ -294,8 +298,8 @@ class ScannerOverlayState extends State<ScannerOverlay> {
     }
 
     // 3 — Detect borders on the stored raw sensor frame.
-    List<ui.Rect> rects;
-    Uint8List?    frozenEdgeMap;
+    List<RotatedCardRect> rects;
+    Uint8List?            frozenEdgeMap;
     if (_showEdgeMap) {
       (rects, frozenEdgeMap) = await CardDetector.detectBordersDebug(
         lastFrame,
@@ -363,7 +367,8 @@ class ScannerOverlayState extends State<ScannerOverlay> {
   // (mirrors the logic in CardBorderPainter so spinners/chips align with borders)
   // ---------------------------------------------------------------------------
 
-  ui.Rect _toDisplayRect(ui.Rect r, double displayW, double displayH) {
+  ui.Rect _toDisplayRect(RotatedCardRect rotated, double displayW, double displayH) {
+    final r = rotated.bounds;  // Use axis-aligned bounds
     final sW = _frameSize!.width;
     final sH = _frameSize!.height;
     switch (_camera!.sensorOrientation) {
@@ -416,7 +421,7 @@ class ScannerOverlayState extends State<ScannerOverlay> {
       fit: StackFit.expand,
       children: [
         // Main scanner content (live or frozen).
-        _phase == _Phase.live ? _buildLive() : _buildFrozen(context),
+        _phase == _Phase.live ? _buildLive(context) : _buildFrozen(context),
 
         // Top-right button cluster: Re-scan (frozen only) + tuning toggle.
         if (_phase == _Phase.frozen || widget.showTuningButton)
@@ -507,14 +512,18 @@ class ScannerOverlayState extends State<ScannerOverlay> {
 
   // ── Live ──────────────────────────────────────────────────────────────────
 
-  Widget _buildLive() {
-    // Compute the display-orientation size of the camera frame.
-    // previewSize from the camera plugin is in sensor/landscape orientation
-    // (width >= height for a landscape sensor), so we swap for 90° / 270°.
-    final ps = _controller!.value.previewSize ?? const Size(1280, 720);
+  Widget _buildLive(BuildContext context) {
+    if (_frameSize == null || _camera == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
     final so = _camera!.sensorOrientation;
-    final displayW = (so == 90 || so == 270) ? ps.height : ps.width;
-    final displayH = (so == 90 || so == 270) ? ps.width  : ps.height;
+    // Use actual frame dimensions (not camera plugin's preview size) for consistency with frozen mode.
+    final displayImageSize = (so == 90 || so == 270)
+        ? Size(_frameSize!.height, _frameSize!.width)
+        : _frameSize!;
+    final displayW = displayImageSize.width;
+    final displayH = displayImageSize.height;
 
     final Widget mediaContent;
     if (_showEdgeMap && _liveEdgeMap != null) {
@@ -523,42 +532,54 @@ class ScannerOverlayState extends State<ScannerOverlay> {
       mediaContent = CameraPreview(_controller!);
     }
 
-    // Use LayoutBuilder so both the media and the border overlay can be
-    // pinned to identical Positioned coordinates.  Both layers live in the
-    // same displayW × displayH box, so the painter's sensor → display mapping
-    // is sufficient — no cropOffset translation is needed.
+    // Use LayoutBuilder to fill the viewport and apply the crop offset explicitly.
+    // This ensures live preview matches snapshot cropping.
     return LayoutBuilder(
       builder: (_, constraints) {
-        final left = (constraints.maxWidth  - displayW) / 2;
-        final top  = (constraints.maxHeight - displayH) / 2;
+        final viewportW = constraints.maxWidth;
+        final viewportH = constraints.maxHeight;
+
+        // Scale factor: how much to scale the camera frame to fill the viewport.
+        final scaleX = viewportW / displayW;
+        final scaleY = viewportH / displayH;
+        final scale = max(scaleX, scaleY); // Cover mode: fill viewport, crop edges
+
+        // Scaled dimensions of the camera frame.
+        final scaledW = displayW * scale;
+        final scaledH = displayH * scale;
+
+        // Center the scaled image within the viewport.
+        final offsetX = (viewportW - scaledW) / 2;
+        final offsetY = (viewportH - scaledH) / 2;
 
         return Stack(
           fit: StackFit.expand,
           children: [
-            // Media — natural camera dimensions, centre-cropped by Stack clip.
+            // Media — scaled and clipped to fill viewport (matching snapshot crop).
             Positioned(
-              left:   left,
-              top:    top,
-              width:  displayW,
-              height: displayH,
-              child:  mediaContent,
+              left:   offsetX,
+              top:    offsetY,
+              width:  scaledW,
+              height: scaledH,
+              child: ClipRect(
+                child: mediaContent,
+              ),
             ),
 
-            // Border overlay — same Positioned offset as the media layer so
-            // both share an identical coordinate origin.  cropOffset defaults
-            // to Offset.zero; Positioned handles the viewport alignment.
+            // Border overlay — same scaling and positioning as media layer.
             if (_frameSize != null && !_capturing)
               Positioned(
-                left:   left,
-                top:    top,
-                width:  displayW,
-                height: displayH,
+                left:   offsetX,
+                top:    offsetY,
+                width:  scaledW,
+                height: scaledH,
                 child: CustomPaint(
                   painter: CardBorderPainter(
                     rects:             _liveRects,
                     imageSize:         _frameSize!,
-                    previewSize:       Size(displayW, displayH),
+                    previewSize:       Size(scaledW, scaledH),
                     sensorOrientation: so,
+                    cropOffset:        ui.Offset.zero,  // ← Positioned layout handles all positioning
                   ),
                 ),
               ),
@@ -605,11 +626,11 @@ class ScannerOverlayState extends State<ScannerOverlay> {
 
     // In edge-map mode show the processed Canny output instead of the JPEG.
     // Both images share the same natural display dimensions (JPEG has EXIF
-    // rotation applied; edge map is pre-rotated by CardDetector), so the
-    // same applyBoxFit overlay computation works for both.
+    // rotation applied; edge map is pre-rotated by CardDetector).
+    // Use BoxFit.cover (crop) to match the live preview—no letterboxing.
     final frozenDisplay = (_showEdgeMap && _frozenEdgeMap != null)
-        ? Image.memory(_frozenEdgeMap!, fit: BoxFit.contain)
-        : Image.file(File(_capturedPhoto!.path), fit: BoxFit.contain);
+        ? Image.memory(_frozenEdgeMap!, fit: BoxFit.cover)
+        : Image.file(File(_capturedPhoto!.path), fit: BoxFit.cover);
 
     return Stack(
       fit: StackFit.expand,
@@ -617,15 +638,14 @@ class ScannerOverlayState extends State<ScannerOverlay> {
         frozenDisplay,
 
         // Border rectangles + spinners / result chips.
-        // The overlay must be constrained to the *actual rendered rect* of the
-        // frozen image, which BoxFit.contain letterboxes inside the widget.
+        // BoxFit.cover crops the image to fill the widget, matching the live preview.
         if (_frameSize != null)
           LayoutBuilder(
             builder: (_, constraints) {
               final widgetW = constraints.maxWidth;
               final widgetH = constraints.maxHeight;
 
-              // Both the JPEG (EXIF-rotated) and the edge map (pre-rotated by
+                    // Both the JPEG (EXIF-rotated) and the edge map (pre-rotated by
               // CardDetector) display in portrait when sensorOrientation is
               // 90 or 270 — swap w/h accordingly.
               final so = _camera!.sensorOrientation;
@@ -633,62 +653,66 @@ class ScannerOverlayState extends State<ScannerOverlay> {
                   ? Size(_frameSize!.height, _frameSize!.width)
                   : _frameSize!;
 
-              final fitted    = applyBoxFit(
-                BoxFit.contain, displayImageSize, Size(widgetW, widgetH),
-              );
-              final renderedW = fitted.destination.width;
-              final renderedH = fitted.destination.height;
-              final offsetX   = (widgetW - renderedW) / 2;
-              final offsetY   = (widgetH - renderedH) / 2;
+              final displayW = displayImageSize.width;
+              final displayH = displayImageSize.height;
+
+              // Calculate how to scale image with BoxFit.cover (same as live preview).
+              final scaleX = widgetW / displayW;
+              final scaleY = widgetH / displayH;
+              final scale = max(scaleX, scaleY); // Cover: fill viewport, crop edges
+
+              final scaledW = displayW * scale;
+              final scaledH = displayH * scale;
+
+              // Center the scaled image in viewport.
+              final offsetX = (widgetW - scaledW) / 2;
+              final offsetY = (widgetH - scaledH) / 2;
 
               return Stack(
+                fit: StackFit.expand,
                 children: [
+                  // Border lines + optional name-strip highlight band.
+                  // Position with same logic as live preview for consistent corner placement.
                   Positioned(
                     left:   offsetX,
                     top:    offsetY,
-                    width:  renderedW,
-                    height: renderedH,
-                    child: Stack(
-                      children: [
-                        // Border lines + optional name-strip highlight band.
-                        Positioned.fill(
-                          child: CustomPaint(
-                            painter: CardBorderPainter(
-                              rects:             _frozenRects,
-                              imageSize:         _frameSize!,
-                              previewSize:       Size(renderedW, renderedH),
-                              sensorOrientation: _camera!.sensorOrientation,
-                              nameStripFraction: _showEdgeMap
-                                  ? _params.nameStripFraction
-                                  : 0,
-                            ),
-                          ),
-                        ),
-
-                        // Spinner or result chip centred on each border.
-                        ..._frozenRects.asMap().entries.map((entry) {
-                          final i      = entry.key;
-                          final dRect  = _toDisplayRect(
-                            entry.value, renderedW, renderedH,
-                          );
-                          final result =
-                              i < _scanResults.length ? _scanResults[i] : null;
-                          return Positioned(
-                            left: dRect.center.dx - 20,
-                            top:  dRect.center.dy - 20,
-                            child: result == null
-                                ? const SizedBox(
-                                    width: 40, height: 40,
-                                    child: CircularProgressIndicator(
-                                      color: Colors.white, strokeWidth: 3,
-                                    ),
-                                  )
-                                : _buildResultChip(context, result),
-                          );
-                        }),
-                      ],
+                    width:  scaledW,
+                    height: scaledH,
+                    child: CustomPaint(
+                      painter: CardBorderPainter(
+                        rects:             _frozenRects,
+                        imageSize:         _frameSize!,
+                        previewSize:       Size(scaledW, scaledH),  // ← Use actual display size
+                        sensorOrientation: so,
+                        cropOffset:        ui.Offset.zero,
+                        nameStripFraction: _showEdgeMap
+                            ? _params.nameStripFraction
+                            : 0,
+                      ),
                     ),
                   ),
+
+                  // Spinner or result chip centred on each border.
+                  ..._frozenRects.asMap().entries.map((entry) {
+                    final i      = entry.key;
+                    final dRect  = _toDisplayRect(
+                      entry.value, widgetW, widgetH,
+                    );
+                    final result =
+                        i < _scanResults.length ? _scanResults[i] : null;
+                    return Positioned(
+                      left: dRect.center.dx - 20,
+                      top:  dRect.center.dy - 20,
+                      child: result == null
+                          ? const SizedBox(
+                              width: 40, height: 40,
+                              child: CircularProgressIndicator(
+                                color: Colors.white, strokeWidth: 3,
+                              ),
+                            )
+                          : _buildResultChip(context, result),
+                    );
+                  }),
                 ],
               );
             },

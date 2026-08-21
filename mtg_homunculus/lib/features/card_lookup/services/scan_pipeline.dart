@@ -7,6 +7,7 @@ import 'package:opencv_dart/opencv_dart.dart' as cv;
 import 'package:path_provider/path_provider.dart';
 
 import '../../../core/logging/app_logger.dart';
+import '../models/rotated_card_rect.dart';
 import '../models/scan_result.dart';
 import '../models/scryfall_card.dart';
 import 'scryfall_client.dart';
@@ -46,7 +47,7 @@ class ScanPipeline {
   /// [MatchedResult.listingCardId] will be an empty string.
   static Future<void> run({
     required CameraImage frame,
-    required List<ui.Rect> borders,
+    required List<RotatedCardRect> borders,
     required int sensorOrientation,
     required void Function(int index, ScanResult result) onResult,
     Future<String> Function(ScryfallCard card)? onCardAdded,
@@ -79,7 +80,7 @@ class ScanPipeline {
   static Future<ScanResult> _processOne({
     required TextRecognizer recognizer,
     required CameraImage frame,
-    required ui.Rect border,
+    required RotatedCardRect border,
     required int sensorOrientation,
     required Future<String> Function(ScryfallCard)? onCardAdded,
     double nameStripFraction = _defaultNameStripFraction,
@@ -144,10 +145,12 @@ class ScanPipeline {
   static Future<String> _ocrNameStrip({
     required TextRecognizer recognizer,
     required CameraImage frame,
-    required ui.Rect sensorBorder,
+    required RotatedCardRect sensorBorder,
     required int sensorOrientation,
     double nameStripFraction = _defaultNameStripFraction,
   }) async {
+    // Use the axis-aligned bounds for cropping (rotated cards support deferred to Phase 1.5.2)
+    final border = sensorBorder.bounds;
     cv.Mat? nv21Mat, bgrMat, displayCropMat;
     File?   tempFile;
     try {
@@ -162,10 +165,10 @@ class ScanPipeline {
       bgrMat = cv.cvtColor(nv21Mat, cv.COLOR_YUV2BGR_NV21);
 
       // 2 — Crop the card bounding box (clamped to frame bounds).
-      final left   = sensorBorder.left.toInt().clamp(0, frame.width  - 1);
-      final top    = sensorBorder.top.toInt().clamp(0, frame.height - 1);
-      final width  = sensorBorder.width.toInt().clamp(1, frame.width  - left);
-      final height = sensorBorder.height.toInt().clamp(1, frame.height - top);
+      final left   = border.left.toInt().clamp(0, frame.width  - 1);
+      final top    = border.top.toInt().clamp(0, frame.height - 1);
+      final width  = border.width.toInt().clamp(1, frame.width  - left);
+      final height = border.height.toInt().clamp(1, frame.height - top);
       // cardCropMat is a region view of bgrMat — same lifetime, no separate dispose.
       final cardCropMat = bgrMat.region(cv.Rect(left, top, width, height));
 

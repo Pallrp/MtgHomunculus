@@ -49,10 +49,46 @@ class DetectorParams {
   /// Landscape aspect-ratio band — upper bound.
   final double maxRatioLand;
 
+  // ── Hough line detection ───────────────────────────────────────────────────
+
+  /// Hough line distance resolution in pixels.
+  final double houghRho;
+
+  /// Hough line angle resolution in radians (~1 degree = pi/180).
+  final double houghTheta;
+
+  /// Minimum number of votes (edge pixels) for a line to be detected.
+  final int houghThreshold;
+
+  /// Minimum line length in pixels (cv.HoughLinesP parameter).
+  final int houghMinLineLength;
+
+  /// Maximum gap between line segments in pixels (cv.HoughLinesP parameter).
+  final int houghMaxLineGap;
+
   // ── OCR pipeline ───────────────────────────────────────────────────────────
 
   /// Fraction of the display-oriented card crop used as the name strip.
   final double nameStripFraction;
+
+  // ── Card size filtering ────────────────────────────────────────────────────
+
+  /// Minimum card width/height in pixels. Filters out small noise.
+  final int minCardPixels;
+
+  /// Maximum card width/height in pixels. Filters out page borders and large structures.
+  final int maxCardPixels;
+
+  /// Lower bound on a detected quad's short/long side ratio.
+  ///
+  /// Measured on the quad's own edges, so it is invariant to in-plane rotation.
+  /// A real card is 63x88mm = 0.716; the band must be wide enough to absorb the
+  /// foreshortening a tilted phone introduces (~0.62 at 30 degrees).
+  final double minCardAspect;
+
+  /// Upper bound on a detected quad's short/long side ratio. Squarer shapes
+  /// (binder pages, table edges) are rejected.
+  final double maxCardAspect;
 
   // ---------------------------------------------------------------------------
   // Construction
@@ -71,7 +107,16 @@ class DetectorParams {
     required this.maxRatioPort,
     required this.minRatioLand,
     required this.maxRatioLand,
+    required this.houghRho,
+    required this.houghTheta,
+    required this.houghThreshold,
+    required this.houghMinLineLength,
+    required this.houghMaxLineGap,
     required this.nameStripFraction,
+    required this.minCardPixels,
+    required this.maxCardPixels,
+    required this.minCardAspect,
+    required this.maxCardAspect,
   });
 
   /// Factory-style const constructor with the tuned baseline values.
@@ -88,7 +133,16 @@ class DetectorParams {
         maxRatioPort        = 0.80,
         minRatioLand        = 0.80,
         maxRatioLand        = 1.60,
-        nameStripFraction   = 0.15;
+        houghRho            = 1.0,
+        houghTheta          = 0.01745, // ~1 degree in radians (pi/180)
+        houghThreshold      = 50,
+        houghMinLineLength  = 100,
+        houghMaxLineGap     = 20,
+        nameStripFraction   = 0.15,
+        minCardPixels       = 100,     // Minimum card dimension in pixels
+        maxCardPixels       = 400,     // Maximum card dimension in pixels
+        minCardAspect       = 0.55,    // ~30 degrees of tilt below 0.716
+        maxCardAspect       = 0.85;    // above this it is a squarer object
 
   DetectorParams copyWith({
     double? cannyLow,
@@ -103,7 +157,16 @@ class DetectorParams {
     double? maxRatioPort,
     double? minRatioLand,
     double? maxRatioLand,
+    double? houghRho,
+    double? houghTheta,
+    int?    houghThreshold,
+    int?    houghMinLineLength,
+    int?    houghMaxLineGap,
     double? nameStripFraction,
+    int?    minCardPixels,
+    int?    maxCardPixels,
+    double? minCardAspect,
+    double? maxCardAspect,
   }) => DetectorParams(
     cannyLow:            cannyLow            ?? this.cannyLow,
     cannyHigh:           cannyHigh           ?? this.cannyHigh,
@@ -117,7 +180,16 @@ class DetectorParams {
     maxRatioPort:        maxRatioPort        ?? this.maxRatioPort,
     minRatioLand:        minRatioLand        ?? this.minRatioLand,
     maxRatioLand:        maxRatioLand        ?? this.maxRatioLand,
+    houghRho:            houghRho            ?? this.houghRho,
+    houghTheta:          houghTheta          ?? this.houghTheta,
+    houghThreshold:      houghThreshold      ?? this.houghThreshold,
+    houghMinLineLength:  houghMinLineLength  ?? this.houghMinLineLength,
+    houghMaxLineGap:     houghMaxLineGap     ?? this.houghMaxLineGap,
     nameStripFraction:   nameStripFraction   ?? this.nameStripFraction,
+    minCardPixels:       minCardPixels       ?? this.minCardPixels,
+    maxCardPixels:       maxCardPixels       ?? this.maxCardPixels,
+    minCardAspect:       minCardAspect       ?? this.minCardAspect,
+    maxCardAspect:       maxCardAspect       ?? this.maxCardAspect,
   );
 
   // ---------------------------------------------------------------------------
@@ -167,7 +239,16 @@ class DetectorParams {
       maxRatioPort:        prefs.getDouble('${_pfx}max_ratio_port')        ?? d.maxRatioPort,
       minRatioLand:        prefs.getDouble('${_pfx}min_ratio_land')        ?? d.minRatioLand,
       maxRatioLand:        prefs.getDouble('${_pfx}max_ratio_land')        ?? d.maxRatioLand,
+      houghRho:            prefs.getDouble('${_pfx}hough_rho')             ?? d.houghRho,
+      houghTheta:          prefs.getDouble('${_pfx}hough_theta')           ?? d.houghTheta,
+      houghThreshold:      prefs.getInt   ('${_pfx}hough_threshold')       ?? d.houghThreshold,
+      houghMinLineLength:  prefs.getInt   ('${_pfx}hough_min_line_length') ?? d.houghMinLineLength,
+      houghMaxLineGap:     prefs.getInt   ('${_pfx}hough_max_line_gap')    ?? d.houghMaxLineGap,
       nameStripFraction:   prefs.getDouble('${_pfx}name_strip_fraction')   ?? d.nameStripFraction,
+      minCardPixels:       prefs.getInt   ('${_pfx}min_card_pixels')       ?? d.minCardPixels,
+      maxCardPixels:       prefs.getInt   ('${_pfx}max_card_pixels')       ?? d.maxCardPixels,
+      minCardAspect:       prefs.getDouble('${_pfx}min_card_aspect')       ?? d.minCardAspect,
+      maxCardAspect:       prefs.getDouble('${_pfx}max_card_aspect')       ?? d.maxCardAspect,
     );
   }
 
@@ -186,7 +267,16 @@ class DetectorParams {
       prefs.setDouble('${_pfx}max_ratio_port',        p.maxRatioPort),
       prefs.setDouble('${_pfx}min_ratio_land',        p.minRatioLand),
       prefs.setDouble('${_pfx}max_ratio_land',        p.maxRatioLand),
+      prefs.setDouble('${_pfx}hough_rho',             p.houghRho),
+      prefs.setDouble('${_pfx}hough_theta',           p.houghTheta),
+      prefs.setInt   ('${_pfx}hough_threshold',       p.houghThreshold),
+      prefs.setInt   ('${_pfx}hough_min_line_length', p.houghMinLineLength),
+      prefs.setInt   ('${_pfx}hough_max_line_gap',    p.houghMaxLineGap),
       prefs.setDouble('${_pfx}name_strip_fraction',   p.nameStripFraction),
+      prefs.setInt   ('${_pfx}min_card_pixels',       p.minCardPixels),
+      prefs.setInt   ('${_pfx}max_card_pixels',       p.maxCardPixels),
+      prefs.setDouble('${_pfx}min_card_aspect',       p.minCardAspect),
+      prefs.setDouble('${_pfx}max_card_aspect',       p.maxCardAspect),
     ]);
   }
 }

@@ -1,5 +1,4 @@
-import 'dart:ui' show Rect;
-
+import 'rotated_card_rect.dart';
 import 'scryfall_card.dart';
 
 /// Result of processing one detected card border through the scan pipeline.
@@ -9,8 +8,8 @@ import 'scryfall_card.dart';
 /// The overlay widget transforms it to display coordinates for positioning
 /// spinners and result chips.
 sealed class ScanResult {
-  /// The detected bounding box in sensor coordinates.
-  final Rect border;
+  /// The detected card rectangle (rotated) in sensor coordinates.
+  final RotatedCardRect border;
   const ScanResult(this.border);
 }
 
