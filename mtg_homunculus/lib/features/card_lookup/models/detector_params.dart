@@ -22,8 +22,9 @@ class DetectorParams {
   /// GaussianBlur kernel size. Must be an odd integer: 3, 5, 7, or 9.
   final int blurKernelSize;
 
-  /// Minimum contour area in pixels. Filters noise and tiny shapes.
-  final double minArea;
+  /// Minimum quad area, as a fraction of shortSide². Filters noise and tiny
+  /// shapes at any capture resolution.
+  final double minAreaFraction;
 
   /// Maximum contour area as a fraction of the total frame area.
   final double maxAreaFraction;
@@ -60,8 +61,11 @@ class DetectorParams {
   /// Minimum number of votes (edge pixels) for a line to be detected.
   final int houghThreshold;
 
-  /// Minimum line length in pixels (cv.HoughLinesP parameter).
-  final int houghMinLineLength;
+  /// Minimum line length, as a fraction of the frame's **short side**.
+  ///
+  /// Absolute pixels would mean something different at every capture
+  /// resolution and orientation — see [minCardFraction].
+  final double houghMinLineFraction;
 
   /// Maximum gap between line segments in pixels (cv.HoughLinesP parameter).
   final int houghMaxLineGap;
@@ -73,11 +77,18 @@ class DetectorParams {
 
   // ── Card size filtering ────────────────────────────────────────────────────
 
-  /// Minimum card width/height in pixels. Filters out small noise.
-  final int minCardPixels;
+  /// Minimum card dimension, as a fraction of the frame's **short side**.
+  ///
+  /// The short side is the orientation-independent measure: a portrait card is
+  /// bounded by frame *height* in a landscape stream frame and by frame *width*
+  /// in a portrait still. Absolute pixel bounds tuned at one orientation
+  /// silently reject the real card at the other — measured on 2026-08-21, where
+  /// a 279px ceiling rejected every real card in a 1280×720 stream and left the
+  /// detector picking art boxes.
+  final double minCardFraction;
 
-  /// Maximum card width/height in pixels. Filters out page borders and large structures.
-  final int maxCardPixels;
+  /// Maximum card dimension, as a fraction of the frame's **short side**.
+  final double maxCardFraction;
 
   /// Lower bound on a detected quad's short/long side ratio.
   ///
@@ -98,7 +109,7 @@ class DetectorParams {
     required this.cannyLow,
     required this.cannyHigh,
     required this.blurKernelSize,
-    required this.minArea,
+    required this.minAreaFraction,
     required this.maxAreaFraction,
     required this.polyEpsilonFraction,
     required this.dilationIterations,
@@ -110,11 +121,11 @@ class DetectorParams {
     required this.houghRho,
     required this.houghTheta,
     required this.houghThreshold,
-    required this.houghMinLineLength,
+    required this.houghMinLineFraction,
     required this.houghMaxLineGap,
     required this.nameStripFraction,
-    required this.minCardPixels,
-    required this.maxCardPixels,
+    required this.minCardFraction,
+    required this.maxCardFraction,
     required this.minCardAspect,
     required this.maxCardAspect,
   });
@@ -124,7 +135,7 @@ class DetectorParams {
       : cannyLow            = 20,
         cannyHigh           = 60,
         blurKernelSize      = 5,
-        minArea             = 2000,
+        minAreaFraction     = 0.02,
         maxAreaFraction     = 0.70,
         polyEpsilonFraction = 0.03,
         dilationIterations  = 2,
@@ -136,11 +147,11 @@ class DetectorParams {
         houghRho            = 1.0,
         houghTheta          = 0.01745, // ~1 degree in radians (pi/180)
         houghThreshold      = 50,
-        houghMinLineLength  = 100,
+        houghMinLineFraction = 0.10,
         houghMaxLineGap     = 20,
         nameStripFraction   = 0.15,
-        minCardPixels       = 100,     // Minimum card dimension in pixels
-        maxCardPixels       = 400,     // Maximum card dimension in pixels
+        minCardFraction     = 0.15,    // of the frame's short side
+        maxCardFraction     = 0.95,    // of the frame's short side
         minCardAspect       = 0.55,    // ~30 degrees of tilt below 0.716
         maxCardAspect       = 0.85;    // above this it is a squarer object
 
@@ -148,7 +159,7 @@ class DetectorParams {
     double? cannyLow,
     double? cannyHigh,
     int?    blurKernelSize,
-    double? minArea,
+    double? minAreaFraction,
     double? maxAreaFraction,
     double? polyEpsilonFraction,
     int?    dilationIterations,
@@ -160,18 +171,18 @@ class DetectorParams {
     double? houghRho,
     double? houghTheta,
     int?    houghThreshold,
-    int?    houghMinLineLength,
+    double? houghMinLineFraction,
     int?    houghMaxLineGap,
     double? nameStripFraction,
-    int?    minCardPixels,
-    int?    maxCardPixels,
+    double? minCardFraction,
+    double? maxCardFraction,
     double? minCardAspect,
     double? maxCardAspect,
   }) => DetectorParams(
     cannyLow:            cannyLow            ?? this.cannyLow,
     cannyHigh:           cannyHigh           ?? this.cannyHigh,
     blurKernelSize:      blurKernelSize      ?? this.blurKernelSize,
-    minArea:             minArea             ?? this.minArea,
+    minAreaFraction:     minAreaFraction     ?? this.minAreaFraction,
     maxAreaFraction:     maxAreaFraction     ?? this.maxAreaFraction,
     polyEpsilonFraction: polyEpsilonFraction ?? this.polyEpsilonFraction,
     dilationIterations:  dilationIterations  ?? this.dilationIterations,
@@ -183,11 +194,11 @@ class DetectorParams {
     houghRho:            houghRho            ?? this.houghRho,
     houghTheta:          houghTheta          ?? this.houghTheta,
     houghThreshold:      houghThreshold      ?? this.houghThreshold,
-    houghMinLineLength:  houghMinLineLength  ?? this.houghMinLineLength,
+    houghMinLineFraction: houghMinLineFraction ?? this.houghMinLineFraction,
     houghMaxLineGap:     houghMaxLineGap     ?? this.houghMaxLineGap,
     nameStripFraction:   nameStripFraction   ?? this.nameStripFraction,
-    minCardPixels:       minCardPixels       ?? this.minCardPixels,
-    maxCardPixels:       maxCardPixels       ?? this.maxCardPixels,
+    minCardFraction:     minCardFraction     ?? this.minCardFraction,
+    maxCardFraction:     maxCardFraction     ?? this.maxCardFraction,
     minCardAspect:       minCardAspect       ?? this.minCardAspect,
     maxCardAspect:       maxCardAspect       ?? this.maxCardAspect,
   );
@@ -230,7 +241,7 @@ class DetectorParams {
       cannyLow:            prefs.getDouble('${_pfx}canny_low')             ?? d.cannyLow,
       cannyHigh:           prefs.getDouble('${_pfx}canny_high')            ?? d.cannyHigh,
       blurKernelSize:      prefs.getInt   ('${_pfx}blur_kernel_size')      ?? d.blurKernelSize,
-      minArea:             prefs.getDouble('${_pfx}min_area')              ?? d.minArea,
+      minAreaFraction:     prefs.getDouble('${_pfx}min_area_fraction')     ?? d.minAreaFraction,
       maxAreaFraction:     prefs.getDouble('${_pfx}max_area_fraction')     ?? d.maxAreaFraction,
       polyEpsilonFraction: prefs.getDouble('${_pfx}poly_epsilon_fraction') ?? d.polyEpsilonFraction,
       dilationIterations:  prefs.getInt   ('${_pfx}dilation_iterations')   ?? d.dilationIterations,
@@ -242,11 +253,11 @@ class DetectorParams {
       houghRho:            prefs.getDouble('${_pfx}hough_rho')             ?? d.houghRho,
       houghTheta:          prefs.getDouble('${_pfx}hough_theta')           ?? d.houghTheta,
       houghThreshold:      prefs.getInt   ('${_pfx}hough_threshold')       ?? d.houghThreshold,
-      houghMinLineLength:  prefs.getInt   ('${_pfx}hough_min_line_length') ?? d.houghMinLineLength,
+      houghMinLineFraction: prefs.getDouble('${_pfx}hough_min_line_frac')  ?? d.houghMinLineFraction,
       houghMaxLineGap:     prefs.getInt   ('${_pfx}hough_max_line_gap')    ?? d.houghMaxLineGap,
       nameStripFraction:   prefs.getDouble('${_pfx}name_strip_fraction')   ?? d.nameStripFraction,
-      minCardPixels:       prefs.getInt   ('${_pfx}min_card_pixels')       ?? d.minCardPixels,
-      maxCardPixels:       prefs.getInt   ('${_pfx}max_card_pixels')       ?? d.maxCardPixels,
+      minCardFraction:     prefs.getDouble('${_pfx}min_card_fraction')    ?? d.minCardFraction,
+      maxCardFraction:     prefs.getDouble('${_pfx}max_card_fraction')    ?? d.maxCardFraction,
       minCardAspect:       prefs.getDouble('${_pfx}min_card_aspect')       ?? d.minCardAspect,
       maxCardAspect:       prefs.getDouble('${_pfx}max_card_aspect')       ?? d.maxCardAspect,
     );
@@ -258,7 +269,7 @@ class DetectorParams {
       prefs.setDouble('${_pfx}canny_low',             p.cannyLow),
       prefs.setDouble('${_pfx}canny_high',            p.cannyHigh),
       prefs.setInt   ('${_pfx}blur_kernel_size',      p.blurKernelSize),
-      prefs.setDouble('${_pfx}min_area',              p.minArea),
+      prefs.setDouble('${_pfx}min_area_fraction',     p.minAreaFraction),
       prefs.setDouble('${_pfx}max_area_fraction',     p.maxAreaFraction),
       prefs.setDouble('${_pfx}poly_epsilon_fraction', p.polyEpsilonFraction),
       prefs.setInt   ('${_pfx}dilation_iterations',   p.dilationIterations),
@@ -270,11 +281,11 @@ class DetectorParams {
       prefs.setDouble('${_pfx}hough_rho',             p.houghRho),
       prefs.setDouble('${_pfx}hough_theta',           p.houghTheta),
       prefs.setInt   ('${_pfx}hough_threshold',       p.houghThreshold),
-      prefs.setInt   ('${_pfx}hough_min_line_length', p.houghMinLineLength),
+      prefs.setDouble('${_pfx}hough_min_line_frac',   p.houghMinLineFraction),
       prefs.setInt   ('${_pfx}hough_max_line_gap',    p.houghMaxLineGap),
       prefs.setDouble('${_pfx}name_strip_fraction',   p.nameStripFraction),
-      prefs.setInt   ('${_pfx}min_card_pixels',       p.minCardPixels),
-      prefs.setInt   ('${_pfx}max_card_pixels',       p.maxCardPixels),
+      prefs.setDouble('${_pfx}min_card_fraction',    p.minCardFraction),
+      prefs.setDouble('${_pfx}max_card_fraction',    p.maxCardFraction),
       prefs.setDouble('${_pfx}min_card_aspect',       p.minCardAspect),
       prefs.setDouble('${_pfx}max_card_aspect',       p.maxCardAspect),
     ]);

@@ -23,6 +23,18 @@ import 'yuv_converter.dart';
 class CardDetector {
   CardDetector._();
 
+  /// Detection never needs more than this on the frame's short side.
+  ///
+  /// Hough finds card borders perfectly well at 720, and capping it is what
+  /// keeps a high capture resolution affordable — the per-frame cost stops
+  /// scaling once the stream goes past this.
+  ///
+  /// Measured 2026-08-21: at `ResolutionPreset.high` the stream is already
+  /// 1280×720, so no downscale happens at all and corners are found at native
+  /// resolution. Above that, corners are found on a downscaled copy and scaled
+  /// back up — which multiplies corner error with them.
+  static const int detectShortSide = 720;
+
   // ---------------------------------------------------------------------------
   // Public API
   // ---------------------------------------------------------------------------
@@ -131,10 +143,9 @@ class CardDetector {
     bool returnEdgeMap     = false,
     int  sensorOrientation = 0,
   }) async {
-    cv.Mat? nv21Mat, bgrMat, grayMat, blurMat, edgeMat,
-            dilatedMat, kernel, rotatedEdge;
+    cv.Mat? nv21Mat, bgrMat;
     try {
-      // 1 — Convert YUV_420_888 → NV21 → BGR Mat.
+      // Convert YUV_420_888 → NV21 → BGR, then hand off to the Mat pipeline.
       final nv21 = YuvConverter.yuv420ToNv21(frame);
       nv21Mat = cv.Mat.fromList(
         frame.height + frame.height ~/ 2,
@@ -144,8 +155,95 @@ class CardDetector {
       );
       bgrMat = cv.cvtColor(nv21Mat, cv.COLOR_YUV2BGR_NV21);
 
+      // Detect on a downscaled copy when the frame is larger than needed, then
+      // lift the corners back into full-frame coordinates. Transparent to
+      // callers: rects always come back in [frame] pixel space.
+      final short = min(bgrMat.rows, bgrMat.cols);
+      if (short > detectShortSide) {
+        final scale = detectShortSide / short;
+        cv.Mat? smallMat;
+        try {
+          smallMat = cv.resize(bgrMat, (
+            (bgrMat.cols * scale).round(),
+            (bgrMat.rows * scale).round(),
+          ));
+          final (rects, edgeMap) = await detectFromBgr(
+            smallMat,
+            p,
+            returnEdgeMap:     returnEdgeMap,
+            sensorOrientation: sensorOrientation,
+          );
+          return (_scaleRects(rects, 1 / scale), edgeMap);
+        } finally {
+          smallMat?.dispose();
+        }
+      }
+
+      return await detectFromBgr(
+        bgrMat,
+        p,
+        returnEdgeMap:     returnEdgeMap,
+        sensorOrientation: sensorOrientation,
+      );
+    } catch (e, st) {
+      AppLogger.w('CardDetector: YUV conversion failed', error: e, stackTrace: st);
+      return (const <RotatedCardRect>[], null);
+    } finally {
+      nv21Mat?.dispose();
+      bgrMat?.dispose();
+    }
+  }
+
+  /// Multiply every corner and bound by [factor].
+  ///
+  /// Used to lift rects found on a downscaled copy back into full-frame
+  /// coordinates.
+  static List<RotatedCardRect> _scaleRects(
+    List<RotatedCardRect> rects,
+    double factor,
+  ) {
+    if (factor == 1.0) return rects;
+    return rects
+        .map((r) => RotatedCardRect(
+              corners: r.corners
+                  .map((c) => ui.Offset(c.dx * factor, c.dy * factor))
+                  .toList(),
+              bounds: ui.Rect.fromLTWH(
+                r.bounds.left * factor,
+                r.bounds.top * factor,
+                r.bounds.width * factor,
+                r.bounds.height * factor,
+              ),
+              rotationAngle: r.rotationAngle,
+            ))
+        .toList();
+  }
+
+  /// Detection pipeline on an already-decoded **BGR** [bgr] Mat.
+  ///
+  /// Split out from [_run] so detection can run on any source — a camera stream
+  /// frame, a still captured with `takePicture()`, or a downscaled copy — rather
+  /// than only on a [CameraImage].  Caller owns [bgr] and disposes it.
+  ///
+  /// Returns rects in **[bgr] pixel coordinates**.
+  static Future<(List<RotatedCardRect>, Uint8List?)> detectFromBgr(
+    cv.Mat bgr,
+    DetectorParams p, {
+    bool returnEdgeMap     = false,
+    int  sensorOrientation = 0,
+  }) async {
+    cv.Mat? grayMat, blurMat, edgeMat, dilatedMat, kernel, rotatedEdge;
+    try {
+      // 1 — Resolve fractional params against this frame.
+      //
+      // The SHORT side is the orientation-independent measure: a portrait card
+      // is bounded by frame height in a landscape stream frame and by frame
+      // width in a portrait still. Resolving here means one set of tuning
+      // values holds across every resolution and orientation.
+      final b = _Bounds.resolve(bgr, p);
+
       // 2 — Grayscale + Gaussian blur to suppress texture noise.
-      grayMat = cv.cvtColor(bgrMat, cv.COLOR_BGR2GRAY);
+      grayMat = cv.cvtColor(bgr, cv.COLOR_BGR2GRAY);
       blurMat = cv.gaussianBlur(
         grayMat,
         (p.blurKernelSize, p.blurKernelSize),
@@ -183,17 +281,17 @@ class CardDetector {
           p.houghRho,
           p.houghTheta,
           p.houghThreshold,
-          minLineLength: p.houghMinLineLength.toDouble(),
+          minLineLength: b.minLineLength,
           maxLineGap: p.houghMaxLineGap.toDouble(),
         );
 
-        final funnel = _Funnel.maybeStart(frame.width, frame.height, p);
+        final funnel = _Funnel.maybeStart(bgr.cols, bgr.rows, p);
 
         if (linesMat.rows > 0) {
           final results = _detectCardsFromHoughLines(
-            linesMat, frame.width, frame.height, p, funnel,
+            linesMat, bgr.cols, bgr.rows, p, b, funnel,
           );
-          final filtered = _filterDetections(results, p, funnel);
+          final filtered = _filterDetections(results, b, funnel);
           funnel?.emit();
           return (filtered, edgeMapPng);
         }
@@ -216,11 +314,11 @@ class CardDetector {
       );
 
       // 6 — Filter by area, 4-corner quadrilateral shape, and aspect ratio.
-      final frameArea = frame.width * frame.height;
+      final frameArea = bgr.cols * bgr.rows;
       final results   = <RotatedCardRect>[];
       for (int i = 0; i < contours.length; i++) {
         final area = cv.contourArea(contours[i]);
-        if (area < p.minArea) continue;
+        if (area < b.minArea) continue;
         if (area > frameArea * p.maxAreaFraction) continue;
 
         final perimeter = cv.arcLength(contours[i], true);
@@ -256,20 +354,18 @@ class CardDetector {
           rotationAngle: rotationAngle,
         ));
       }
-      final filtered = _filterDetections(results, p, null);
+      final filtered = _filterDetections(results, b, null);
       return (filtered, edgeMapPng);
     } catch (e, st) {
       AppLogger.w('CardDetector: OpenCV error', error: e, stackTrace: st);
       return (const <RotatedCardRect>[], null);
     } finally {
-      nv21Mat?.dispose();
-      bgrMat?.dispose();
       grayMat?.dispose();
       blurMat?.dispose();
       edgeMat?.dispose();
       dilatedMat?.dispose();
       kernel?.dispose();
-      rotatedEdge?.dispose(); // null when sensorOrientation==0 or returnEdgeMap==false
+      rotatedEdge?.dispose();
     }
   }
 
@@ -326,6 +422,7 @@ class CardDetector {
     int frameWidth,
     int frameHeight,
     DetectorParams p,
+    _Bounds b,
     _Funnel? funnel,
   ) {
     // 1 — Extract raw segments, longest first.
@@ -367,7 +464,7 @@ class CardDetector {
           for (int l = k + 1; l < famB.length; l++) {
             final quad = _quadFromLinePairs(
               famA[i], famA[j], famB[k], famB[l],
-              frameWidth, frameHeight, p, funnel,
+              frameWidth, frameHeight, p, b, funnel,
             );
             if (quad != null) results.add(quad);
           }
@@ -500,6 +597,7 @@ class CardDetector {
     int frameWidth,
     int frameHeight,
     DetectorParams p,
+    _Bounds b,
     _Funnel? funnel,
   ) {
     funnel?.recordCombo();
@@ -541,7 +639,7 @@ class CardDetector {
       return null;
     }
 
-    if (!_validateCardRect(rect, frameWidth, frameHeight, p)) {
+    if (!_validateCardRect(rect, frameWidth, frameHeight, p, b)) {
       funnel?.recordValidateReject(rect);
       return null;
     }
@@ -625,12 +723,13 @@ class CardDetector {
     int frameWidth,
     int frameHeight,
     DetectorParams p,
+    _Bounds b,
   ) {
     final area = rect.width * rect.height;
     final frameArea = frameWidth * frameHeight;
 
     // Check area bounds
-    if (area < p.minArea) return false;
+    if (area < b.minArea) return false;
     if (area > frameArea * p.maxAreaFraction) return false;
 
     return true;
@@ -686,7 +785,7 @@ class CardDetector {
   /// cards sitting side by side — which barely overlap — both survive.
   static List<RotatedCardRect> _filterDetections(
     List<RotatedCardRect> rects,
-    DetectorParams p,
+    _Bounds b,
     _Funnel? funnel,
   ) {
     if (rects.isEmpty) {
@@ -698,7 +797,7 @@ class CardDetector {
     final sized = rects.where((r) {
       final minDim = min(r.bounds.width, r.bounds.height);
       final maxDim = max(r.bounds.width, r.bounds.height);
-      return minDim >= p.minCardPixels && maxDim <= p.maxCardPixels;
+      return minDim >= b.minCardPx && maxDim <= b.maxCardPx;
     }).toList();
 
     if (sized.length <= 1) {
@@ -794,6 +893,49 @@ class CardDetector {
     return ui.Rect.fromLTWH(cropLeft.toDouble(), cropTop.toDouble(), cropWidth.toDouble(), cropHeight.toDouble());
   }
 
+}
+
+// ---------------------------------------------------------------------------
+// Frame-resolved bounds
+// ---------------------------------------------------------------------------
+
+/// [DetectorParams] fractions resolved against one frame.
+///
+/// Every size-like parameter is stored as a fraction of the frame's **short
+/// side** and turned into pixels here, once per frame. That is what lets one
+/// set of tuning values hold at 480×720 and 1920×1080, portrait or landscape.
+class _Bounds {
+  /// Shorter of the frame's two dimensions.
+  final double shortSide;
+
+  final double minCardPx;
+  final double maxCardPx;
+  final double minLineLength;
+  final double minArea;
+
+  const _Bounds._(
+    this.shortSide,
+    this.minCardPx,
+    this.maxCardPx,
+    this.minLineLength,
+    this.minArea,
+  );
+
+  factory _Bounds.resolve(cv.Mat frame, DetectorParams p) {
+    final short = min(frame.rows, frame.cols).toDouble();
+    return _Bounds._(
+      short,
+      short * p.minCardFraction,
+      short * p.maxCardFraction,
+      short * p.houghMinLineFraction,
+      short * short * p.minAreaFraction,
+    );
+  }
+
+  @override
+  String toString() =>
+      'short=${shortSide.round()} card=${minCardPx.round()}-${maxCardPx.round()} '
+      'minLine=${minLineLength.round()} minArea=${minArea.round()}';
 }
 
 // ---------------------------------------------------------------------------
@@ -962,7 +1104,7 @@ class _Funnel {
       'FUNNEL ${frameWidth}x$frameHeight '
       'canny=${p.cannyLow.round()}/${p.cannyHigh.round()} '
       'dil=${p.dilationIterations} blur=${p.blurKernelSize} '
-      'minLineLen=${p.houghMinLineLength} maxGap=${p.houghMaxLineGap} '
+      'maxGap=${p.houghMaxLineGap} '
       'thresh=${p.houghThreshold}\n'
       '  houghLines=$_totalLines  top8=[${_topLines.join(' | ')}]\n'
       '  merged=$_mergedCount  '

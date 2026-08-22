@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../models/detector_params.dart';
 
@@ -9,9 +8,8 @@ import '../models/detector_params.dart';
 
 /// Semi-transparent parameter-tuning panel rendered over the scanner.
 ///
-/// Shows all [DetectorParams] fields as interactive controls (sliders,
-/// segmented buttons, text field) grouped into high-impact and lower-impact
-/// sections.  Changes are reported immediately via [onParamsChanged] so the
+/// Shows all [DetectorParams] fields as interactive controls (sliders and
+/// segmented buttons) grouped into high-impact and lower-impact sections.  Changes are reported immediately via [onParamsChanged] so the
 /// caller can hot-reload detection without any explicit "Apply" step.
 ///
 /// The panel does not persist values itself — the caller is responsible for
@@ -38,31 +36,6 @@ class TuningPanel extends StatefulWidget {
 }
 
 class _TuningPanelState extends State<TuningPanel> {
-  late final TextEditingController _minAreaCtrl;
-
-  @override
-  void initState() {
-    super.initState();
-    _minAreaCtrl = TextEditingController(
-      text: widget.params.minArea.toInt().toString(),
-    );
-  }
-
-  @override
-  void didUpdateWidget(TuningPanel old) {
-    super.didUpdateWidget(old);
-    // Sync text field if params were reset from outside (e.g. "Reset defaults").
-    if (old.params.minArea != widget.params.minArea) {
-      _minAreaCtrl.text = widget.params.minArea.toInt().toString();
-    }
-  }
-
-  @override
-  void dispose() {
-    _minAreaCtrl.dispose();
-    super.dispose();
-  }
-
   // ---------------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------------
@@ -140,7 +113,16 @@ class _TuningPanelState extends State<TuningPanel> {
                   const Divider(height: 8),
                   const SizedBox(height: 4),
 
-                  _buildMinAreaField(context),
+                  _buildFloatSlider(
+                    context,
+                    label:    'Min Area Fraction',
+                    hint:     'Of shortSide² · Range: 0.002–0.10 · Default: 0.02',
+                    value:    _p.minAreaFraction,
+                    min:      0.002,
+                    max:      0.10,
+                    decimals: 3,
+                    onChanged: (v) => _update(_p.copyWith(minAreaFraction: v)),
+                  ),
                   _buildFloatSlider(
                     context,
                     label:    'Max Area Fraction',
@@ -159,23 +141,25 @@ class _TuningPanelState extends State<TuningPanel> {
                     options: const [3, 5, 7],
                     onChanged: (v) => _update(_p.copyWith(dilationKernelSize: v)),
                   ),
-                  _buildIntSlider(
+                  _buildFloatSlider(
                     context,
-                    label:    'Min Card Pixels',
-                    hint:     'Minimum card dimension (px) · Range: 50–200 · Default: 100',
-                    value:    _p.minCardPixels,
-                    min:      50,
-                    max:      200,
-                    onChanged: (v) => _update(_p.copyWith(minCardPixels: v)),
+                    label:    'Min Card Fraction',
+                    hint:     'Of the frame\'s short side · Range: 0.05–0.50 · Default: 0.15',
+                    value:    _p.minCardFraction,
+                    min:      0.05,
+                    max:      0.50,
+                    decimals: 2,
+                    onChanged: (v) => _update(_p.copyWith(minCardFraction: v)),
                   ),
-                  _buildIntSlider(
+                  _buildFloatSlider(
                     context,
-                    label:    'Max Card Pixels',
-                    hint:     'Max card dimension (px) · Must stay below a 2-card block · Range: 150–800 · Default: 400',
-                    value:    _p.maxCardPixels,
-                    min:      150,
-                    max:      800,
-                    onChanged: (v) => _update(_p.copyWith(maxCardPixels: v)),
+                    label:    'Max Card Fraction',
+                    hint:     'Of the frame\'s short side · Range: 0.30–1.20 · Default: 0.95',
+                    value:    _p.maxCardFraction,
+                    min:      0.30,
+                    max:      1.20,
+                    decimals: 2,
+                    onChanged: (v) => _update(_p.copyWith(maxCardFraction: v)),
                   ),
                   _buildFloatSlider(
                     context,
@@ -244,14 +228,15 @@ class _TuningPanelState extends State<TuningPanel> {
                     max:      200,
                     onChanged: (v) => _update(_p.copyWith(houghThreshold: v)),
                   ),
-                  _buildIntSlider(
+                  _buildFloatSlider(
                     context,
-                    label:    'Hough Min Line Length',
-                    hint:     'Minimum line length (px) · Range: 30–300 · Default: 100',
-                    value:    _p.houghMinLineLength,
-                    min:      30,
-                    max:      300,
-                    onChanged: (v) => _update(_p.copyWith(houghMinLineLength: v)),
+                    label:    'Hough Min Line Fraction',
+                    hint:     'Of the frame\'s short side · Range: 0.03–0.40 · Default: 0.10',
+                    value:    _p.houghMinLineFraction,
+                    min:      0.03,
+                    max:      0.40,
+                    decimals: 2,
+                    onChanged: (v) => _update(_p.copyWith(houghMinLineFraction: v)),
                   ),
                   _buildIntSlider(
                     context,
@@ -432,28 +417,6 @@ class _TuningPanelState extends State<TuningPanel> {
     ),
   );
 
-  /// Min area — plain text field (no meaningful upper bound).
-  Widget _buildMinAreaField(BuildContext context) => _ControlRow(
-    label: 'Min Area (px²)',
-    value: '',           // value shown inside the text field itself
-    hint:  'Positive integer · Default: 2000',
-    child: TextField(
-      controller:   _minAreaCtrl,
-      keyboardType: TextInputType.number,
-      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-      decoration: InputDecoration(
-        isDense:       true,
-        border:        const OutlineInputBorder(),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        suffixText:    'px²',
-        suffixStyle:   Theme.of(context).textTheme.bodySmall,
-      ),
-      onChanged: (s) {
-        final v = double.tryParse(s);
-        if (v != null && v > 0) _update(_p.copyWith(minArea: v));
-      },
-    ),
-  );
 }
 
 // ---------------------------------------------------------------------------

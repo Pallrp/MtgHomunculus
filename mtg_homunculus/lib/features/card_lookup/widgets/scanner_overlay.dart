@@ -169,7 +169,12 @@ class ScannerOverlayState extends State<ScannerOverlay> {
 
     _controller = CameraController(
       _camera!,
-      ResolutionPreset.medium,
+      // Measured in spike S1/S3 (2026-08-21): `medium` misreads the set code
+      // (KLN for XLN), and everything above `high` costs framerate for no gain
+      // — `max` actively regressed. `high` also happens to match
+      // [CardDetector.detectShortSide], so detection runs at native resolution
+      // with no downscale and no corner-error amplification.
+      ResolutionPreset.high,
       enableAudio: false,
     );
 
