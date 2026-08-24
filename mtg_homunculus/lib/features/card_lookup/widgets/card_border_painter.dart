@@ -1,3 +1,4 @@
+import 'dart:math' show max, min;
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart' show listEquals;
@@ -41,6 +42,18 @@ class CardBorderPainter extends CustomPainter {
   /// Viewport crop offset — see class doc.  Defaults to [Offset.zero].
   final Offset cropOffset;
 
+  /// When true, a caption tells the user what to do about a non-green border.
+  ///
+  /// On by default. Colour alone only means something to someone who already
+  /// knows green is the goal — a first-time user sees an amber outline and has
+  /// no idea the fix is to move the phone closer.
+  final bool showQualityLabel;
+
+  /// Appends the measured value to the caption ("4.8/6 px/mm").
+  ///
+  /// Calibration detail, not user guidance.
+  final bool showQualityDetail;
+
   const CardBorderPainter({
     required this.rects,
     required this.imageSize,
@@ -48,16 +61,21 @@ class CardBorderPainter extends CustomPainter {
     required this.sensorOrientation,
     this.nameStripFraction = 0,
     this.cropOffset        = Offset.zero,
+    this.showQualityLabel  = true,
+    this.showQualityDetail = false,
   });
+
+  /// Green: ready. Amber: fixable by moving. Red: not a whole card.
+  static Color _colourFor(CardQuality q) => switch (q) {
+        CardQuality.good      => Colors.greenAccent,
+        CardQuality.tooFar    => Colors.amberAccent,
+        CardQuality.tooTilted => Colors.orangeAccent,
+        CardQuality.offShape  => Colors.redAccent,
+      };
 
   @override
   void paint(Canvas canvas, Size size) {
     if (rects.isEmpty) return;
-
-    final borderPaint = Paint()
-      ..color       = Colors.greenAccent.withValues(alpha: 0.9)
-      ..style       = PaintingStyle.stroke
-      ..strokeWidth = 3;
 
     final stripPaint = Paint()
       ..color = Colors.amber.withValues(alpha: 0.35)
@@ -81,15 +99,25 @@ class CardBorderPainter extends CustomPainter {
         displayCorners.add(vpCorner);
       }
 
-      // Draw quadrilateral from the 4 corners.
+      // Draw quadrilateral from the 4 corners, coloured by how usable it is.
       if (displayCorners.length == 4) {
+        final quality = rotated.quality;
         final path = ui.Path();
         path.moveTo(displayCorners[0].dx, displayCorners[0].dy);
         path.lineTo(displayCorners[1].dx, displayCorners[1].dy);
         path.lineTo(displayCorners[2].dx, displayCorners[2].dy);
         path.lineTo(displayCorners[3].dx, displayCorners[3].dy);
         path.close();
-        canvas.drawPath(path, borderPaint);
+        canvas.drawPath(
+          path,
+          Paint()
+            ..color       = _colourFor(quality).withValues(alpha: 0.9)
+            ..style       = PaintingStyle.stroke
+            ..strokeWidth = 3,
+        );
+        if (showQualityLabel && quality != CardQuality.good) {
+          _drawLabel(canvas, displayCorners, rotated, quality);
+        }
       }
 
       // Name-strip highlight band — top [nameStripFraction] of the axis-aligned bounds.
@@ -132,7 +160,56 @@ class CardBorderPainter extends CustomPainter {
       old.previewSize        != previewSize      ||
       old.sensorOrientation  != sensorOrientation ||
       old.nameStripFraction  != nameStripFraction ||
-      old.cropOffset         != cropOffset;
+      old.cropOffset         != cropOffset        ||
+      old.showQualityLabel   != showQualityLabel   ||
+      old.showQualityDetail  != showQualityDetail;
+
+  /// Caption above the border saying what to do about it.
+  void _drawLabel(
+    Canvas canvas,
+    List<ui.Offset> corners,
+    RotatedCardRect rect,
+    CardQuality quality,
+  ) {
+    final (text, detail) = switch (quality) {
+      CardQuality.tooFar => (
+          'Move closer',
+          '${rect.pixelsPerMm.toStringAsFixed(1)}/'
+              '${RotatedCardRect.minPixelsPerMm.toStringAsFixed(0)} px/mm',
+        ),
+      CardQuality.tooTilted => (
+          'Hold flatter',
+          'skew ${rect.perspectiveSkew?.toStringAsFixed(2) ?? "?"}',
+        ),
+      CardQuality.offShape => (
+          'Whole card not in view',
+          'ar ${rect.rectifiedAspect?.toStringAsFixed(2) ?? "?"}',
+        ),
+      CardQuality.good => ('', ''),
+    };
+    if (text.isEmpty) return;
+    final label = showQualityDetail ? '$text  ($detail)' : text;
+
+    final tp = TextPainter(
+      text: TextSpan(
+        text: label,
+        style: TextStyle(
+          color: _colourFor(quality),
+          fontSize: 12,
+          fontWeight: FontWeight.bold,
+          shadows: const [Shadow(color: Colors.black, blurRadius: 3)],
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+
+    // Sit above the topmost corner, clamped into view.
+    var x = corners.map((c) => c.dx).reduce(min);
+    var y = corners.map((c) => c.dy).reduce(min) - tp.height - 4;
+    if (y < 0) y = corners.map((c) => c.dy).reduce(max) + 4;
+    if (x < 0) x = 0;
+    tp.paint(canvas, Offset(x, y));
+  }
 
   /// Transform a single point from sensor coordinates to display coordinates.
   /// Applies the same rotation transformation that [CameraPreview] uses.

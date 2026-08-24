@@ -599,6 +599,7 @@ class CardDetector {
       corners: ordered,
       bounds: rect,
       rotationAngle: _calculateRotationAngle(ordered),
+      rectifiedAspect: _rectifiedAspect(ordered, frameWidth, frameHeight),
     );
   }
 
@@ -679,6 +680,7 @@ class CardDetector {
         corners: ordered,
         bounds: _boundsFromCorners(ordered),
         rotationAngle: _calculateRotationAngle(ordered),
+        rectifiedAspect: _rectifiedAspect(ordered, frameWidth, frameHeight),
       ));
     }
 
@@ -752,6 +754,80 @@ class CardDetector {
   /// Opposite sides are averaged before the ratio is taken: perspective turns a
   /// tilted rectangle into a trapezoid where the near edge grows as much as the
   /// far edge shrinks, so the mean of the pair stays close to the true side.
+  /// Focal length as a fraction of the frame's LONG side.
+  ///
+  /// `f_px = (width / 2) / tan(HFOV / 2)`; a typical phone's ~65-70 degree
+  /// horizontal field of view puts this near 0.78 (≈1000px at 1280 wide).
+  /// Expressed as a fraction so it survives any downscale.
+  ///
+  /// Accuracy is forgiving: with f wrong by ±30% the recovered aspect is still
+  /// 2-3x better than measuring the quad as drawn. Self-calibratable later,
+  /// since every card *is* 63×88 — solve for the f that makes a confident
+  /// detection read 0.716.
+  static const double _focalPerLongSide = 0.78;
+
+  /// True aspect of the rectangle [c] is a projection of, or null if it is not
+  /// the projection of one.
+  ///
+  /// The two pairs of opposite sides are parallel in 3D, so each pair meets at a
+  /// vanishing point in the image. Those two points, plus the focal length, give
+  /// the 3D edge directions — and the ratio of the physical sides falls out.
+  /// No warping is involved, and none would help: `getPerspectiveTransform` maps
+  /// any four points onto any four points, so anything measured *after* a warp
+  /// reads back the destination you chose.
+  ///
+  /// Zhang & He, *Whiteboard Scanning and Image Enhancement* (2006).
+  ///
+  /// [c] must be ordered clockwise from top-left, which is what
+  /// [_orderCornersClockwise] produces.
+  static double? _rectifiedAspect(
+    List<ui.Offset> c,
+    int frameWidth,
+    int frameHeight,
+  ) {
+    if (c.length != 4) return null;
+
+    // Principal point at the image centre; the formula assumes it is the origin.
+    final cx = frameWidth  / 2.0;
+    final cy = frameHeight / 2.0;
+    final f  = max(frameWidth, frameHeight) * _focalPerLongSide;
+    final f2 = f * f;
+
+    // m1 = TL, m2 = TR, m3 = BL, m4 = BR — note 3 and 4 are swapped relative to
+    // clockwise order.
+    List<double> h(ui.Offset p) => [p.dx - cx, p.dy - cy, 1.0];
+    final m1 = h(c[0]), m2 = h(c[1]), m4 = h(c[2]), m3 = h(c[3]);
+
+    List<double> cross(List<double> a, List<double> b) => [
+          a[1] * b[2] - a[2] * b[1],
+          a[2] * b[0] - a[0] * b[2],
+          a[0] * b[1] - a[1] * b[0],
+        ];
+    double dot(List<double> a, List<double> b) =>
+        a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+
+    final d2 = dot(cross(m2, m4), m3);
+    final d3 = dot(cross(m3, m4), m2);
+    if (d2.abs() < 1e-9 || d3.abs() < 1e-9) return null;
+
+    final k2 = dot(cross(m1, m4), m3) / d2;
+    final k3 = dot(cross(m1, m4), m2) / d3;
+
+    // n2 and n3 are the two vanishing points, scaled by the corner geometry.
+    final n2 = [for (int i = 0; i < 3; i++) k2 * m2[i] - m1[i]];
+    final n3 = [for (int i = 0; i < 3; i++) k3 * m3[i] - m1[i]];
+
+    final num = n2[0] * n2[0] + n2[1] * n2[1] + n2[2] * n2[2] * f2;
+    final den = n3[0] * n3[0] + n3[1] * n3[1] + n3[2] * n3[2] * f2;
+    if (den <= 0 || num <= 0) return null;
+
+    final ratio = sqrt(num / den);
+    if (!ratio.isFinite || ratio <= 0) return null;
+
+    // Orientation-independent, like _quadAspect: always short over long.
+    return ratio > 1 ? 1 / ratio : ratio;
+  }
+
   static double _quadAspect(List<ui.Offset> c) {
     if (c.length != 4) return 0;
     final sideA = ((c[0] - c[1]).distance + (c[2] - c[3]).distance) / 2;
@@ -1203,7 +1279,8 @@ class _Funnel {
       _keptDesc.add(
         '${r.bounds.width.round()}x${r.bounds.height.round()}'
         '@${(r.rotationAngle * 180 / 3.141592653589793).round()}deg'
-        ' ar=${CardDetector._quadAspect(r.corners).toStringAsFixed(2)}',
+        ' ar=${CardDetector._quadAspect(r.corners).toStringAsFixed(2)}'
+        ' rect=${r.rectifiedAspect?.toStringAsFixed(2) ?? "-"}',
       );
     }
   }

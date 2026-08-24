@@ -727,6 +727,8 @@ class ScannerOverlayState extends State<ScannerOverlay> {
                     previewSize:       Size(scaledW, scaledH),
                     sensorOrientation: so,
                     cropOffset:        ui.Offset.zero,  // ← Positioned layout handles all positioning
+                    // [dev-tool] Append the measured value while calibrating.
+                    showQualityDetail: _tuningOpen || _showOcrDebug,
                   ),
                 ),
               ),
