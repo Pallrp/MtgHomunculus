@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
@@ -5,6 +6,9 @@ import 'dart:ui' as ui;
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
+import 'package:opencv_dart/opencv_dart.dart' as cv;
+import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../../../core/logging/app_logger.dart';
@@ -13,10 +17,12 @@ import '../models/rotated_card_rect.dart';
 import '../models/scan_result.dart';
 import '../models/scryfall_card.dart';
 import '../services/card_detector.dart';
+import '../services/card_warp.dart';
 import '../services/scan_pipeline.dart';
 import 'card_border_painter.dart';
 import 'manual_entry_dialog.dart';
 import 'printing_browser_sheet.dart';
+import 'ocr_debug_panel.dart';
 import 'tuning_panel.dart';
 
 // ---------------------------------------------------------------------------
@@ -129,6 +135,17 @@ class ScannerOverlayState extends State<ScannerOverlay> {
   // ── Tuning / debug ────────────────────────────────────────────────────────
   bool           _tuningOpen  = false;
   bool           _showEdgeMap = false;
+
+  // ── [dev-tool] live OCR readout ────────────────────────────────────────────
+  bool           _showOcrDebug   = false;
+  Uint8List?     _ocrCardPng;
+  Uint8List?     _ocrBandPng;
+  String         _ocrText        = '';
+  double         _ocrPxPerMm     = 0;
+  bool           _ocrBusy        = false;
+  DateTime       _ocrLastRun     = DateTime.fromMillisecondsSinceEpoch(0);
+  int            _ocrDumpIx      = 0;
+  TextRecognizer? _recognizer;
   DetectorParams _params      = const DetectorParams.defaults();
   Uint8List?     _liveEdgeMap;
   Uint8List?     _frozenEdgeMap;
@@ -208,6 +225,7 @@ class ScannerOverlayState extends State<ScannerOverlay> {
 
   @override
   void dispose() {
+    _recognizer?.close();
     _stopStream();
     _controller?.dispose();
     super.dispose();
@@ -264,10 +282,105 @@ class ScannerOverlayState extends State<ScannerOverlay> {
         }
       }
 
+      if (_showOcrDebug) {
+        // Deliberately not awaited — the readout must never slow detection.
+        unawaited(_runOcrDebug(frame, rects));
+      }
+
       // Throttle to ~2 fps.
       await Future.delayed(const Duration(milliseconds: 300));
       _canProcess = true;
     });
+  }
+
+  /// [dev-tool] Warp the best detection, crop the collector band, OCR it.
+  ///
+  /// Throttled hard — one pass per second at most, and never overlapping —
+  /// because it converts the whole frame and round-trips through ML Kit.
+  Future<void> _runOcrDebug(CameraImage frame, List<RotatedCardRect> rects) async {
+    if (_ocrBusy) return;
+    if (DateTime.now().difference(_ocrLastRun) < const Duration(seconds: 1)) return;
+    _ocrLastRun = DateTime.now();
+
+    if (rects.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _ocrCardPng = null;
+          _ocrBandPng = null;
+          _ocrText    = '';
+          _ocrPxPerMm = 0;
+        });
+      }
+      return;
+    }
+
+    _ocrBusy = true;
+    if (mounted) setState(() {});
+
+    cv.Mat? card;
+    File? tmp;
+    try {
+      final corners = rects.first.corners;
+      final pxPerMm = CardWarp.pixelsPerMm(corners);
+
+      card = CardWarp.fromCameraImage(frame, corners);
+      if (card == null) return;
+
+      final band     = CardWarp.collectorBand(card);
+      final cardPng  = CardWarp.encodePng(card);
+      final bandPng  = CardWarp.encodePng(band);
+
+      var text = '';
+      final (ok, jpg) = cv.imencode('.jpg', band);
+      if (ok) {
+        final dir = await getTemporaryDirectory();
+        tmp = File('${dir.path}/ocrdbg_${DateTime.now().millisecondsSinceEpoch}.jpg');
+        await tmp.writeAsBytes(jpg.toList());
+        _recognizer ??= TextRecognizer(script: TextRecognitionScript.latin);
+        final res = await _recognizer!.processImage(InputImage.fromFilePath(tmp.path));
+        text = res.text.trim();
+      }
+
+      // [dev-tool] Keep the last 8 warps on disk, in the documents dir so
+      // `adb run-as` can pull them. Lets the warp be inspected directly rather
+      // than inferred from the OCR text.
+      final ix = _ocrDumpIx++ % 8;
+      try {
+        final docs = await getApplicationDocumentsDirectory();
+        final d = Directory('${docs.path}/ocrdump');
+        if (!await d.exists()) await d.create(recursive: true);
+        if (cardPng != null) {
+          await File('${d.path}/${ix}_card.png').writeAsBytes(cardPng);
+        }
+        if (bandPng != null) {
+          await File('${d.path}/${ix}_band.png').writeAsBytes(bandPng);
+        }
+      } catch (e) {
+        AppLogger.w('OCR-DBG dump failed: $e');
+      }
+
+      AppLogger.d(
+        'OCR-DBG #$ix ${frame.width}x${frame.height} '
+        '${pxPerMm.toStringAsFixed(2)} px/mm  '
+        '${text.isEmpty ? "EMPTY" : '"${text.replaceAll('\n', ' / ')}"'}',
+      );
+
+      if (mounted) {
+        setState(() {
+          _ocrCardPng = cardPng;
+          _ocrBandPng = bandPng;
+          _ocrText    = text;
+          _ocrPxPerMm = pxPerMm;
+        });
+      }
+    } catch (e, st) {
+      AppLogger.w('OCR-DBG failed', error: e, stackTrace: st);
+    } finally {
+      card?.dispose();
+      if (tmp != null) { try { await tmp.delete(); } catch (_) {} }
+      _ocrBusy = false;
+      if (mounted) setState(() {});
+    }
   }
 
   void _stopStream() {
@@ -452,6 +565,25 @@ class ScannerOverlayState extends State<ScannerOverlay> {
             ),
           ),
 
+        // [dev-tool] OCR readout — sits above the tuning sheet so both are usable.
+        if (_showOcrDebug)
+          Positioned(
+            left: 8, right: 8,
+            bottom: _tuningOpen
+                ? MediaQuery.of(context).size.height * 0.65 + 8
+                : 16,
+            child: SafeArea(
+              top: false,
+              child: OcrDebugPanel(
+                card:    _ocrCardPng,
+                band:    _ocrBandPng,
+                text:    _ocrText,
+                pxPerMm: _ocrPxPerMm,
+                busy:    _ocrBusy,
+              ),
+            ),
+          ),
+
         // Tuning panel — slides up from the bottom when open.
         if (widget.showTuningButton && _tuningOpen)
           Positioned(
@@ -459,11 +591,21 @@ class ScannerOverlayState extends State<ScannerOverlay> {
             child: TuningPanel(
               params:       _params,
               showEdgeMap:  _showEdgeMap,
+              showOcrDebug: _showOcrDebug,
               onParamsChanged: (p) async {
                 setState(() => _params = p);
                 await DetectorParams.setCurrent(p);
               },
               onEdgeMapToggled: (v) => setState(() => _showEdgeMap = v),
+              onOcrDebugToggled: (v) => setState(() {
+                _showOcrDebug = v;
+                if (!v) {
+                  _ocrCardPng = null;
+                  _ocrBandPng = null;
+                  _ocrText    = '';
+                  _ocrPxPerMm = 0;
+                }
+              }),
               onClose: () => setState(() => _tuningOpen = false),
             ),
           ),

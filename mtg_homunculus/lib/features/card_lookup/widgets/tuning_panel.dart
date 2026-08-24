@@ -9,25 +9,33 @@ import '../models/detector_params.dart';
 /// Semi-transparent parameter-tuning panel rendered over the scanner.
 ///
 /// Shows all [DetectorParams] fields as interactive controls (sliders and
-/// segmented buttons) grouped into high-impact and lower-impact sections.  Changes are reported immediately via [onParamsChanged] so the
-/// caller can hot-reload detection without any explicit "Apply" step.
+/// segmented buttons) grouped into high-impact and lower-impact sections.
+/// Changes are reported immediately via [onParamsChanged] so the caller can
+/// hot-reload detection without any explicit "Apply" step.
+///
+/// Also hosts the two dev-tool toggles: the Canny edge overlay and the live
+/// OCR readout.
 ///
 /// The panel does not persist values itself — the caller is responsible for
 /// calling [DetectorParams.setCurrent] from [onParamsChanged].
 class TuningPanel extends StatefulWidget {
   final DetectorParams params;
   final bool           showEdgeMap;
+  final bool           showOcrDebug;
 
   final void Function(DetectorParams) onParamsChanged;
   final void Function(bool)           onEdgeMapToggled;
+  final void Function(bool)           onOcrDebugToggled;
   final VoidCallback                  onClose;
 
   const TuningPanel({
     super.key,
     required this.params,
     required this.showEdgeMap,
+    required this.showOcrDebug,
     required this.onParamsChanged,
     required this.onEdgeMapToggled,
+    required this.onOcrDebugToggled,
     required this.onClose,
   });
 
@@ -68,6 +76,7 @@ class _TuningPanelState extends State<TuningPanel> {
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
                 children: [
                   _buildEdgeToggle(context),
+                  _buildOcrToggle(context),
                   const SizedBox(height: 8),
                   _buildResetRow(context),
                   const SizedBox(height: 12),
@@ -293,6 +302,16 @@ class _TuningPanelState extends State<TuningPanel> {
     ),
     value:    widget.showEdgeMap,
     onChanged: widget.onEdgeMapToggled,
+  );
+
+  Widget _buildOcrToggle(BuildContext context) => SwitchListTile(
+    contentPadding: EdgeInsets.zero,
+    title: const Text('Show OCR readout'),
+    subtitle: const Text(
+      'Corrected card, collector-number crop and the raw ML Kit text',
+    ),
+    value:    widget.showOcrDebug,
+    onChanged: widget.onOcrDebugToggled,
   );
 
   Widget _buildResetRow(BuildContext context) => Align(
