@@ -273,89 +273,39 @@ class CardDetector {
         if (sensorOrientation == 0) rotatedEdge = null;
       }
 
-      // 5 — Detect lines using Hough transform.
-      cv.Mat? linesMat;
-      try {
-        linesMat = cv.HoughLinesP(
-          dilatedMat,
-          p.houghRho,
-          p.houghTheta,
-          p.houghThreshold,
-          minLineLength: b.minLineLength,
-          maxLineGap: p.houghMaxLineGap.toDouble(),
-        );
+      final funnel = _Funnel.maybeStart(bgr.cols, bgr.rows, p);
 
-        final funnel = _Funnel.maybeStart(bgr.cols, bgr.rows, p);
-
-        if (linesMat.rows > 0) {
-          final results = _detectCardsFromHoughLines(
-            linesMat, bgr.cols, bgr.rows, p, b, funnel,
-          );
-          final filtered = _filterDetections(results, b, funnel);
-          funnel?.emit();
-          return (filtered, edgeMapPng);
-        }
-
-        // Hough found no lines at all — record that before falling through,
-        // otherwise this failure mode is invisible in the funnel.
-        funnel?.recordLines(0, const []);
-        funnel?.emit();
-      } catch (_) {
-        // Hough detection failed, fall through to contour detection
-      } finally {
-        linesMat?.dispose();
-      }
-
-      // 5b — Fallback to contour detection if Hough found nothing.
-      final (contours, _) = cv.findContours(
-        dilatedMat,
-        cv.RETR_EXTERNAL,
-        cv.CHAIN_APPROX_SIMPLE,
+      // 5 — Contours propose.
+      //
+      // A contour is a *connected* boundary, so one contour is one candidate.
+      // There is no combination step, and therefore no way to assemble a
+      // rectangle out of lines belonging to different objects -- which is the
+      // mechanism that produces phantoms in the Hough path.
+      //
+      // This ran second until 2026-08-24, reached only when Hough returned zero
+      // lines. That ordering is why houghMinLineLength=247 "worked": it starved
+      // HoughLinesP into silence so control fell through to here.
+      final contourRects = _detectFromContours(
+        dilatedMat, bgr.cols, bgr.rows, p, b, funnel,
       );
-
-      // 6 — Filter by area, 4-corner quadrilateral shape, and aspect ratio.
-      final frameArea = bgr.cols * bgr.rows;
-      final results   = <RotatedCardRect>[];
-      for (int i = 0; i < contours.length; i++) {
-        final area = cv.contourArea(contours[i]);
-        if (area < b.minArea) continue;
-        if (area > frameArea * p.maxAreaFraction) continue;
-
-        final perimeter = cv.arcLength(contours[i], true);
-        final approx    = cv.approxPolyDP(
-          contours[i],
-          p.polyEpsilonFraction * perimeter,
-          true,
-        );
-        if (approx.length != 4) continue;
-        if (!cv.isContourConvex(approx)) continue;
-
-        // Use minAreaRect to get rotated rectangle with actual corner points.
-        final rotRect = cv.minAreaRect(approx);
-        // Extract 4 corner points from rotated rect.
-        final pts = cv.boxPoints(rotRect);
-        final corners = <ui.Offset>[
-          ui.Offset(pts[0].x.toDouble(), pts[0].y.toDouble()),
-          ui.Offset(pts[1].x.toDouble(), pts[1].y.toDouble()),
-          ui.Offset(pts[2].x.toDouble(), pts[2].y.toDouble()),
-          ui.Offset(pts[3].x.toDouble(), pts[3].y.toDouble()),
-        ];
-
-        // Reorder corners into circular sequence for proper quad drawing.
-        final orderedCorners = _orderCornersClockwise(corners);
-
-        // Compute axis-aligned bounds and rotation angle.
-        final bounds = _boundsFromCorners(orderedCorners);
-        final rotationAngle = _calculateRotationAngle(orderedCorners);
-
-        results.add(RotatedCardRect(
-          corners: orderedCorners,
-          bounds: bounds,
-          rotationAngle: rotationAngle,
-        ));
+      if (contourRects.isNotEmpty) {
+        funnel?.recordPath('contour');
+        funnel?.emit();
+        return (contourRects, edgeMapPng);
       }
-      final filtered = _filterDetections(results, b, null);
-      return (filtered, edgeMapPng);
+
+      // 6 — Hough rescues.
+      //
+      // Only reached when contours proposed nothing -- a broken border, too
+      // little contrast, a boundary that never closed. Gaps are what Hough
+      // tolerates and contours cannot, so this is the job it is actually
+      // suited to.
+      final houghRects = _detectFromHough(
+        dilatedMat, bgr.cols, bgr.rows, p, b, funnel,
+      );
+      funnel?.recordPath(houghRects.isEmpty ? 'none' : 'hough');
+      funnel?.emit();
+      return (houghRects, edgeMapPng);
     } catch (e, st) {
       AppLogger.w('CardDetector: OpenCV error', error: e, stackTrace: st);
       return (const <RotatedCardRect>[], null);
@@ -652,6 +602,136 @@ class CardDetector {
     );
   }
 
+  // ---------------------------------------------------------------------------
+  // Detection paths
+  // ---------------------------------------------------------------------------
+
+  /// Propose candidates from connected contours.
+  ///
+  /// Each surviving contour yields exactly one rect, so the candidate count is
+  /// bounded by the number of distinct objects in the frame rather than by the
+  /// combinatorics of line pairing.
+  static List<RotatedCardRect> _detectFromContours(
+    cv.Mat dilated,
+    int frameWidth,
+    int frameHeight,
+    DetectorParams p,
+    _Bounds b,
+    _Funnel? funnel,
+  ) {
+    final (contours, _) = cv.findContours(
+      dilated,
+      cv.RETR_EXTERNAL,
+      cv.CHAIN_APPROX_SIMPLE,
+    );
+
+    final frameArea = frameWidth * frameHeight;
+    final results   = <RotatedCardRect>[];
+    var quads = 0, areaRej = 0, notQuad = 0, notConvex = 0;
+
+    // Every contour's area, kept so the funnel can report the largest against
+    // b.minArea. That ratio distinguishes the two readings of an areaRej-heavy
+    // frame: a boundary that fragmented into sub-threshold pieces (largest
+    // lands near the gate) from one that never formed at all (largest is
+    // noise-sized). They need opposite fixes.
+    final areas = <double>[];
+
+    // Vertex count of every contour that clears the area gate. `notQuad`
+    // alone cannot say which way approxPolyDP missed: too fine an epsilon
+    // keeps every lump as a vertex (6, 7, 8...), too coarse collapses a corner
+    // and lands below 4. The two want opposite moves on the slider.
+    final verts = <int>[];
+
+    for (int i = 0; i < contours.length; i++) {
+      final area = cv.contourArea(contours[i]);
+      areas.add(area);
+      if (area < b.minArea) { areaRej++; continue; }
+      if (area > frameArea * p.maxAreaFraction) { areaRej++; continue; }
+
+      final perimeter = cv.arcLength(contours[i], true);
+      final approx    = cv.approxPolyDP(
+        contours[i],
+        p.polyEpsilonFraction * perimeter,
+        true,
+      );
+      // NOTE: this exact-four-corners test discards a card whose outline has one
+      // nicked corner or a slight bend. Step C replaces it with a rectangularity
+      // score; until then it is a competing explanation for any contour miss.
+      verts.add(approx.length);
+      if (approx.length != 4) { notQuad++; continue; }
+      if (!cv.isContourConvex(approx)) { notConvex++; continue; }
+      quads++;
+
+      // Use the polygon's own vertices, NOT minAreaRect/boxPoints.
+      //
+      // A tilted card projects to a trapezoid — near edge longer than far edge
+      // — and no rectangle can fit a trapezoid, so a bounding rect puts the
+      // corners visibly off the card and the error grows with tilt. `approx`
+      // already holds the real corners; CardWarp needs them to build a correct
+      // perspective transform.
+      final corners = <ui.Offset>[
+        for (int k = 0; k < 4; k++)
+          ui.Offset(approx[k].x.toDouble(), approx[k].y.toDouble()),
+      ];
+      final ordered = _orderCornersClockwise(corners);
+
+      results.add(RotatedCardRect(
+        corners: ordered,
+        bounds: _boundsFromCorners(ordered),
+        rotationAngle: _calculateRotationAngle(ordered),
+      ));
+    }
+
+    final kept = _filterDetections(results, b, funnel);
+    areas.sort((x, y) => y.compareTo(x));
+    funnel?.recordContours(
+      contours.length, areaRej, notQuad, notConvex, quads, kept.length,
+      areas.take(3).toList(), b.minArea, verts,
+    );
+    return kept;
+  }
+
+  /// Propose candidates by pairing Hough lines.
+  ///
+  /// Returns an empty list rather than throwing, so a failure here falls
+  /// through to "no detection" instead of taking the frame down.
+  static List<RotatedCardRect> _detectFromHough(
+    cv.Mat dilated,
+    int frameWidth,
+    int frameHeight,
+    DetectorParams p,
+    _Bounds b,
+    _Funnel? funnel,
+  ) {
+    cv.Mat? linesMat;
+    try {
+      linesMat = cv.HoughLinesP(
+        dilated,
+        p.houghRho,
+        p.houghTheta,
+        p.houghThreshold,
+        minLineLength: b.minLineLength,
+        maxLineGap: p.houghMaxLineGap.toDouble(),
+      );
+
+      if (linesMat.rows == 0) {
+        // Record explicitly: otherwise this failure mode is invisible.
+        funnel?.recordLines(0, const []);
+        return const [];
+      }
+
+      final results = _detectCardsFromHoughLines(
+        linesMat, frameWidth, frameHeight, p, b, funnel,
+      );
+      return _filterDetections(results, b, funnel);
+    } catch (e, st) {
+      AppLogger.w('CardDetector: Hough path failed', error: e, stackTrace: st);
+      return const [];
+    } finally {
+      linesMat?.dispose();
+    }
+  }
+
   /// Intersection of the two *infinite* lines through the given segments.
   /// Returns null when they are parallel.
   static ui.Offset? _intersectInfinite(_Seg a, _Seg b) {
@@ -802,6 +882,7 @@ class CardDetector {
 
     if (sized.length <= 1) {
       funnel?.recordStages(sized.length, sized.length);
+      funnel?.recordKept(sized);
       return sized;
     }
 
@@ -1027,6 +1108,20 @@ class _Funnel {
   final List<double> _formedAspects = [];
 
   int? _sizeOk, _kept;
+
+  // Contour path — the base rate step B exists to measure.
+  int? _contoursFound, _contourAreaRej, _contourNotQuad,
+       _contourNotConvex, _contourQuads, _contourKept;
+
+  /// Three largest contour areas and the gate they were measured against.
+  List<double> _topAreas = const [];
+  double _minArea = 0;
+
+  /// Vertex counts from approxPolyDP for contours that cleared the area gate.
+  List<int> _verts = const [];
+
+  /// Which path produced the frame's result: contour, hough, or none.
+  String _path = 'none';
   final List<String> _keptDesc = [];
 
   _Funnel._(this.frameWidth, this.frameHeight, this.p);
@@ -1065,6 +1160,23 @@ class _Funnel {
     _famSepDeg = d > 90 ? 180 - d : d;
   }
 
+  void recordContours(
+    int found, int areaRej, int notQuad, int notConvex, int quads, int kept,
+    List<double> topAreas, double minArea, List<int> verts,
+  ) {
+    _topAreas = topAreas;
+    _minArea  = minArea;
+    _verts    = verts;
+    _contoursFound    = found;
+    _contourAreaRej   = areaRej;
+    _contourNotQuad   = notQuad;
+    _contourNotConvex = notConvex;
+    _contourQuads     = quads;
+    _contourKept      = kept;
+  }
+
+  void recordPath(String path) => _path = path;
+
   void recordCombo()                   => _combosTried++;
   void recordOutOfBounds()             => _outOfBounds++;
   void recordSliver()                  => _slivers++;
@@ -1096,6 +1208,12 @@ class _Funnel {
     }
   }
 
+  /// Largest contours as a percentage of the area gate. Above 100% means the
+  /// contour cleared it; well below means the boundary never reached card size.
+  String _fmtAreas() => _minArea <= 0
+      ? '-'
+      : _topAreas.map((a) => '${(100 * a / _minArea).round()}%').join(', ');
+
   String _fmtAspects(List<double> xs) =>
       xs.map((a) => a.toStringAsFixed(2)).join(',');
 
@@ -1106,6 +1224,11 @@ class _Funnel {
       'dil=${p.dilationIterations} blur=${p.blurKernelSize} '
       'maxGap=${p.houghMaxLineGap} '
       'thresh=${p.houghThreshold}\n'
+      '  PATH=$_path  contours=$_contoursFound  areaRej=$_contourAreaRej '
+      'notQuad=$_contourNotQuad notConvex=$_contourNotConvex '
+      'quads=$_contourQuads contourKept=$_contourKept\n'
+      '  minArea=${_minArea.round()}  top3=[${_fmtAreas()}]  '
+      'eps=${p.polyEpsilonFraction.toStringAsFixed(3)} verts=$_verts\n'
       '  houghLines=$_totalLines  top8=[${_topLines.join(' | ')}]\n'
       '  merged=$_mergedCount  '
       '${_splitFailed ? "SPLIT FAILED (no two families)" : "famA=$_famA famB=$_famB sep=${_famSepDeg.round()}deg"}\n'
