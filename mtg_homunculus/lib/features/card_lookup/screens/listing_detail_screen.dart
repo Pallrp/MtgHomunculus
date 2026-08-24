@@ -44,7 +44,6 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
   bool         _loading       = true;
   bool         _cameraActive  = true;
   bool         _detecting     = false;   // drives capture-button green tint
-  bool         _scannerFrozen = false;   // hides button while result view is shown
 
   // ---------------------------------------------------------------------------
   // Init / dispose
@@ -220,7 +219,6 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
               onCardAdded:        _onCardAdded,
               onCardUpdated:      _onCardUpdated,
               onDetectionChanged: (d) => setState(() => _detecting     = d),
-              onPhaseChanged:     (f) => setState(() => _scannerFrozen = f),
             ),
           ),
 
@@ -239,7 +237,6 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
               minSheetSize:     _minSheetSize,
               cameraActive:     _cameraActive,
               detecting:        _detecting,
-              scannerFrozen:    _scannerFrozen,
               onDeleteCard:     _deleteCard,
               onSetQuantity:    _setQuantity,
               onCardTap: (id) {
@@ -253,7 +250,6 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                 );
               },
               onCapture: () => _scannerKey.currentState?.capture(),
-              onReset:   () => _scannerKey.currentState?.reset(),
               onExportCsv: _exportCsv,
             ),
           ),
@@ -293,12 +289,10 @@ class _ListingPanel extends StatelessWidget {
   final double                             minSheetSize;
   final bool                               cameraActive;
   final bool                               detecting;
-  final bool                               scannerFrozen;
   final Future<void> Function(String id)           onDeleteCard;
   final Future<void> Function(String id, int qty)  onSetQuantity;
   final void Function(String id)                   onCardTap;
   final VoidCallback                               onCapture;
-  final VoidCallback                               onReset;
   final VoidCallback                               onExportCsv;
 
   const _ListingPanel({
@@ -308,12 +302,10 @@ class _ListingPanel extends StatelessWidget {
     required this.minSheetSize,
     required this.cameraActive,
     required this.detecting,
-    required this.scannerFrozen,
     required this.onDeleteCard,
     required this.onSetQuantity,
     required this.onCardTap,
     required this.onCapture,
-    required this.onReset,
     required this.onExportCsv,
   });
 
@@ -324,13 +316,11 @@ class _ListingPanel extends StatelessWidget {
   // ── Camera-button helpers ─────────────────────────────────────────────────
 
   IconData get _cameraIcon {
-    if (scannerFrozen) return Icons.replay_rounded;
     if (!cameraActive) return Icons.keyboard_arrow_down_rounded;
     return Icons.camera_alt_rounded;
   }
 
   VoidCallback _cameraTap(BuildContext context) {
-    if (scannerFrozen) return onReset;
     if (!cameraActive) {
       return () => sheetController.animateTo(
             minSheetSize,
@@ -447,13 +437,9 @@ class _ListingPanel extends StatelessWidget {
           top: 0, left: 0, right: 0,
           child: Center(
             child: CaptureButton(
-              detecting:       detecting && cameraActive && !scannerFrozen,
-              onTap:           _cameraTap(context),
-              icon:            _cameraIcon,
-              backgroundColor: scannerFrozen
-                  ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.9)
-                  : null,
-              iconColor: scannerFrozen ? Colors.white : null,
+              detecting: detecting && cameraActive,
+              onTap:     _cameraTap(context),
+              icon:      _cameraIcon,
             ),
           ),
         ),

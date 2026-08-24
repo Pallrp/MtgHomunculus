@@ -26,8 +26,7 @@ import '../models/rotated_card_rect.dart';
 /// axis — `(displayW − viewportW) / 2` horizontally and
 /// `(displayH − viewportH) / 2` vertically — and is subtracted from each
 /// computed display coordinate so the drawn shape lands in viewport space.
-/// Defaults to [Offset.zero] (correct for the frozen-frame painter where the
-/// image is already scaled to fit the viewport via [BoxFit.contain]).
+/// Defaults to [Offset.zero].
 class CardBorderPainter extends CustomPainter {
   final List<RotatedCardRect> rects;
   final Size          imageSize;

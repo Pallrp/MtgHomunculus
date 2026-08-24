@@ -29,8 +29,6 @@ import 'tuning_panel.dart';
 // State enum
 // ---------------------------------------------------------------------------
 
-enum _Phase { live, frozen }
-
 // ---------------------------------------------------------------------------
 // Widget
 // ---------------------------------------------------------------------------
@@ -41,17 +39,13 @@ enum _Phase { live, frozen }
 /// - Initialises and owns the [CameraController] (one init, never recreated).
 /// - Starts / stops the image stream based on [isActive] (the parent ties this
 ///   to whether the bottom sheet handle is fully down).
-/// - **Live mode**: streams frames → [CardDetector] at ~2 fps → [CardBorderPainter].
-/// - **Capture**: stops stream, takes a display photo, re-runs border detection
-///   on the last raw sensor frame (same coordinate space as live mode).
-/// - **Frozen mode**: shows the captured photo with border rectangles,
-///   spinners while the pipeline is running, and result chips once each card
-///   is identified.
-///
-/// **Pipeline wiring (Slice 7)**
-/// The `// TODO(slice-7)` block in [_capture] is replaced with a call to
-/// `ScanPipeline.run(...)` which drives the per-card OCR + Scryfall flow and
-/// calls back with [ScanResult] objects that fill each spinner slot.
+/// - Streams frames → [CardDetector] at ~2 fps → [CardBorderPainter].
+/// - **Capture identifies the live frame in place.** The preview never freezes:
+///   spike S3 established that a stream frame carries the resolution the
+///   pipeline needs, so there is nothing a still would add and no inspection
+///   step to hold the image for.
+/// - The most recent outcome shows briefly as a chip. The last-scan bar and
+///   sheet in `single_card_capture_flow.md` replace it.
 class ScannerOverlay extends StatefulWidget {
   /// Whether the camera stream should be running.
   /// Set to `true` when the bottom sheet handle is fully collapsed.
@@ -83,14 +77,6 @@ class ScannerOverlay extends StatefulWidget {
   /// detected.
   final void Function(bool detecting)? onDetectionChanged;
 
-  /// Called when the overlay switches between live and frozen phase.
-  ///
-  /// `isFrozen = true`  → capture in progress / results visible.
-  /// `isFrozen = false` → back to live scanning.
-  /// The parent uses this to hide the externally-rendered capture button
-  /// while the frozen result view is shown.
-  final void Function(bool isFrozen)? onPhaseChanged;
-
   /// When true, a tuning-panel toggle button is rendered inside the overlay
   /// and the full [TuningPanel] is accessible.  Intended for [QuickScanScreen]
   /// only; leave false (the default) for [ListingDetailScreen].
@@ -104,7 +90,6 @@ class ScannerOverlay extends StatefulWidget {
     this.showCaptureButton   = true,
     this.showTuningButton    = false,
     this.onDetectionChanged,
-    this.onPhaseChanged,
   });
 
   @override
@@ -124,13 +109,10 @@ class ScannerOverlayState extends State<ScannerOverlay> {
   Size?                  _frameSize;   // sensor frame dimensions (width × height)
   bool                   _canProcess = true;
 
-  // ── Frozen mode ───────────────────────────────────────────────────────────
-  _Phase                _phase           = _Phase.live;
-  bool                  _capturing       = false;  // true while stopping stream + taking picture
-  XFile?                _capturedPhoto;
-  List<RotatedCardRect> _frozenRects     = [];
-  List<ScanResult?>     _scanResults     = [];     // null slot = spinner
-  bool                  _pipelineRunning = false;
+  // ── Identification ────────────────────────────────────────────────────────
+  bool       _capturing   = false;  // pipeline in flight
+  ScanResult? _lastResult;          // most recent outcome, shown briefly
+  DateTime?   _lastResultAt;
 
   // ── Tuning / debug ────────────────────────────────────────────────────────
   bool           _tuningOpen  = false;
@@ -148,7 +130,6 @@ class ScannerOverlayState extends State<ScannerOverlay> {
   TextRecognizer? _recognizer;
   DetectorParams _params      = const DetectorParams.defaults();
   Uint8List?     _liveEdgeMap;
-  Uint8List?     _frozenEdgeMap;
 
   // ---------------------------------------------------------------------------
   // Init / dispose
@@ -208,7 +189,7 @@ class ScannerOverlayState extends State<ScannerOverlay> {
 
     if (!mounted) return;
     setState(() => _cameraReady = true);
-    if (widget.isActive && _phase == _Phase.live) _startStream();
+    if (widget.isActive) _startStream();
   }
 
   @override
@@ -216,7 +197,7 @@ class ScannerOverlayState extends State<ScannerOverlay> {
     super.didUpdateWidget(oldWidget);
     if (!_cameraReady || oldWidget.isActive == widget.isActive) return;
 
-    if (widget.isActive && _phase == _Phase.live) {
+    if (widget.isActive) {
       _startStream();
     } else if (!widget.isActive) {
       _stopStream();
@@ -238,13 +219,8 @@ class ScannerOverlayState extends State<ScannerOverlay> {
   /// Triggers the capture sequence programmatically.
   ///
   /// No-op if the camera is not ready, already capturing, no frame has
-  /// been received yet, or the overlay is already in frozen mode.
+  /// been received yet, or a previous identification is still running.
   void capture() => _capture();
-
-  /// Returns to live scanning, discarding the current frozen result.
-  ///
-  /// No-op if already in live mode.
-  void reset() => _reset();
 
   // ---------------------------------------------------------------------------
   // Stream management
@@ -395,135 +371,67 @@ class ScannerOverlayState extends State<ScannerOverlay> {
   // ---------------------------------------------------------------------------
 
   Future<void> _capture() async {
-    if (!_cameraReady || _capturing || _lastFrame == null ||
-        _phase == _Phase.frozen) { return; }
-    final lastFrame = _lastFrame!;
+    if (!_cameraReady || _capturing || _lastFrame == null) return;
+    final frame = _lastFrame!;
+    final rects = _liveRects;
 
-    // 1 — Show loading overlay over the live preview while we work.
-    setState(() {
-      _capturing = true;
-      _liveRects = []; // clear live borders immediately
-    });
-    widget.onDetectionChanged?.call(false);
+    if (rects.isEmpty) return;
 
-    // 2 — Stop stream and take a JPEG for display.
-    _stopStream();
-    XFile? photo;
+    // The preview keeps running. There is no inspection step to freeze for:
+    // the stream frame is the capture (spike S3), so stopping it would only
+    // cost the next detection and buy nothing.
+    setState(() => _capturing = true);
+
     try {
-      photo = await _controller!.takePicture();
-    } catch (e, st) {
-      AppLogger.w('ScannerOverlay: takePicture failed', error: e, stackTrace: st);
-    }
-
-    // 3 — Detect borders on the stored raw sensor frame.
-    List<RotatedCardRect> rects;
-    Uint8List?            frozenEdgeMap;
-    if (_showEdgeMap) {
-      (rects, frozenEdgeMap) = await CardDetector.detectBordersDebug(
-        lastFrame,
-        params:            _params,
-        sensorOrientation: _camera!.sensorOrientation,
-      );
-    } else {
-      rects = await CardDetector.detectBorders(lastFrame, params: _params);
-    }
-    AppLogger.d('ScannerOverlay: capture detected ${rects.length} border(s)');
-
-    if (!mounted) return;
-
-    // 4 — Switch to frozen mode; all detected border slots start as spinners.
-    setState(() {
-      _phase           = _Phase.frozen;
-      _capturing       = false;
-      _capturedPhoto   = photo;
-      _frozenRects     = rects;
-      _frozenEdgeMap   = frozenEdgeMap;
-      _scanResults     = List.filled(rects.length, null);
-      _pipelineRunning = rects.isNotEmpty;
-    });
-    widget.onPhaseChanged?.call(true);
-
-    if (rects.isNotEmpty) {
       await ScanPipeline.run(
-        frame:             lastFrame,
+        frame:             frame,
         borders:           rects,
         sensorOrientation: _camera!.sensorOrientation,
         onCardAdded:       widget.onCardAdded,
         nameStripFraction: _params.nameStripFraction,
         onResult: (i, result) {
-          if (mounted) {
-            setState(() {
-              _scanResults[i]  = result;
-              _pipelineRunning = _scanResults.any((r) => r == null);
-            });
-          }
+          if (!mounted) return;
+          setState(() {
+            _lastResult   = result;
+            _lastResultAt = DateTime.now();
+          });
         },
       );
+    } finally {
+      if (mounted) setState(() => _capturing = false);
     }
-    if (mounted) { setState(() => _pipelineRunning = false); }
   }
 
-  void _reset() {
-    setState(() {
-      _phase           = _Phase.live;
-      _capturing       = false;
-      _capturedPhoto   = null;
-      _frozenRects     = [];
-      _frozenEdgeMap   = null;
-      _scanResults     = [];
-      _pipelineRunning = false;
-      _liveRects       = [];
-      _liveEdgeMap     = null;
-    });
-    widget.onDetectionChanged?.call(false);
-    widget.onPhaseChanged?.call(false);
-    if (widget.isActive) _startStream();
-  }
+  /// Transient banner for the most recent scan.
+  ///
+  /// Placeholder for the last-scan bar in `single_card_capture_flow.md`, which
+  /// belongs to the sheet work. Enough to confirm a card was added without
+  /// interrupting the scanning rhythm.
+  Widget? _buildLastResult(BuildContext context) {
+    final result = _lastResult;
+    final at     = _lastResultAt;
+    if (result == null || at == null) return null;
+    if (DateTime.now().difference(at) > const Duration(seconds: 4)) return null;
 
-  // ---------------------------------------------------------------------------
-  // Coordinate transform — sensor rect → display rect
-  // (mirrors the logic in CardBorderPainter so spinners/chips align with borders)
-  // ---------------------------------------------------------------------------
-
-  ui.Rect _toDisplayRect(RotatedCardRect rotated, double displayW, double displayH) {
-    final r = rotated.bounds;  // Use axis-aligned bounds
-    final sW = _frameSize!.width;
-    final sH = _frameSize!.height;
-    switch (_camera!.sensorOrientation) {
-      case 90:
-        final sx = displayW / sH;
-        final sy = displayH / sW;
-        return ui.Rect.fromLTWH(
-          (sH - r.top - r.height) * sx,
-          r.left                  * sy,
-          r.height * sx,
-          r.width  * sy,
-        );
-      case 270:
-        final sx = displayW / sH;
-        final sy = displayH / sW;
-        return ui.Rect.fromLTWH(
-          r.top                   * sx,
-          (sW - r.left - r.width) * sy,
-          r.height * sx,
-          r.width  * sy,
-        );
-      case 180:
-        final sx = displayW / sW;
-        final sy = displayH / sH;
-        return ui.Rect.fromLTWH(
-          (sW - r.left - r.width)  * sx,
-          (sH - r.top  - r.height) * sy,
-          r.width  * sx,
-          r.height * sy,
-        );
-      default: // 0°
-        final sx = displayW / sW;
-        final sy = displayH / sH;
-        return ui.Rect.fromLTWH(
-          r.left * sx, r.top * sy, r.width * sx, r.height * sy,
-        );
-    }
+    return switch (result) {
+      MatchedResult(:final card, :final listingCardId) => _MatchedChip(
+          card:  card,
+          onTap: () => PrintingBrowserSheet.show(
+            context,
+            card:          card,
+            listingCardId: listingCardId,
+            onUpdated:     widget.onCardUpdated,
+          ),
+        ),
+      FailedResult(:final ocrText) => _FailedChip(
+          ocrText: ocrText,
+          onTap:   () => ManualEntryDialog.show(
+            context,
+            ocrText:     ocrText,
+            onCardAdded: widget.onCardAdded,
+          ),
+        ),
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -538,11 +446,11 @@ class ScannerOverlayState extends State<ScannerOverlay> {
     return Stack(
       fit: StackFit.expand,
       children: [
-        // Main scanner content (live or frozen).
-        _phase == _Phase.live ? _buildLive(context) : _buildFrozen(context),
+        // Live preview — there is no other mode.
+        _buildLive(context),
 
-        // Top-right button cluster: Re-scan (frozen only) + tuning toggle.
-        if (_phase == _Phase.frozen || widget.showTuningButton)
+        // Top-right button cluster: tuning toggle.
+        if (widget.showTuningButton)
           Positioned(
             top: 0, right: 0,
             child: SafeArea(
@@ -553,14 +461,23 @@ class ScannerOverlayState extends State<ScannerOverlay> {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    if (_phase == _Phase.frozen) ...[
-                      _buildRescanButton(),
-                      if (widget.showTuningButton) const SizedBox(height: 6),
-                    ],
-                    if (widget.showTuningButton)
-                      _buildTuningToggleButton(),
+                    _buildTuningToggleButton(),
                   ],
                 ),
+              ),
+            ),
+          ),
+
+        // Most recent scan outcome — brief, non-blocking.
+        if (_buildLastResult(context) case final banner?)
+          Positioned(
+            left: 12, right: 12,
+            top: 0,
+            child: SafeArea(
+              bottom: false,
+              child: Align(
+                alignment: Alignment.topCenter,
+                child: banner,
               ),
             ),
           ),
@@ -613,17 +530,6 @@ class ScannerOverlayState extends State<ScannerOverlay> {
     );
   }
 
-  Widget _buildRescanButton() => FilledButton.icon(
-    icon:      const Icon(Icons.refresh_rounded, size: 18),
-    label:     const Text('Re-scan'),
-    onPressed: _pipelineRunning ? null : _reset,
-    style: FilledButton.styleFrom(
-      backgroundColor: const Color(0xAA000000),
-      foregroundColor: Colors.white,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-    ),
-  );
-
   Widget _buildTuningToggleButton() => IconButton(
     icon:  Icon(_tuningOpen ? Icons.tune : Icons.tune_rounded),
     color: _showEdgeMap ? Colors.greenAccent : Colors.white,
@@ -665,7 +571,7 @@ class ScannerOverlayState extends State<ScannerOverlay> {
     }
 
     final so = _camera!.sensorOrientation;
-    // Use actual frame dimensions (not camera plugin's preview size) for consistency with frozen mode.
+    // Use actual frame dimensions, not the plugin's preview size.
     final displayImageSize = (so == 90 || so == 270)
         ? Size(_frameSize!.height, _frameSize!.width)
         : _frameSize!;
@@ -757,139 +663,6 @@ class ScannerOverlayState extends State<ScannerOverlay> {
     );
   }
 
-  // ── Frozen ────────────────────────────────────────────────────────────────
-
-  Widget _buildFrozen(BuildContext context) {
-    if (_capturedPhoto == null) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text('Capture failed.', style: Theme.of(context).textTheme.bodyMedium),
-            const SizedBox(height: 16),
-            TextButton(onPressed: _reset, child: const Text('Re-scan')),
-          ],
-        ),
-      );
-    }
-
-    // In edge-map mode show the processed Canny output instead of the JPEG.
-    // Both images share the same natural display dimensions (JPEG has EXIF
-    // rotation applied; edge map is pre-rotated by CardDetector).
-    // Use BoxFit.cover (crop) to match the live preview—no letterboxing.
-    final frozenDisplay = (_showEdgeMap && _frozenEdgeMap != null)
-        ? Image.memory(_frozenEdgeMap!, fit: BoxFit.cover)
-        : Image.file(File(_capturedPhoto!.path), fit: BoxFit.cover);
-
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        frozenDisplay,
-
-        // Border rectangles + spinners / result chips.
-        // BoxFit.cover crops the image to fill the widget, matching the live preview.
-        if (_frameSize != null)
-          LayoutBuilder(
-            builder: (_, constraints) {
-              final widgetW = constraints.maxWidth;
-              final widgetH = constraints.maxHeight;
-
-                    // Both the JPEG (EXIF-rotated) and the edge map (pre-rotated by
-              // CardDetector) display in portrait when sensorOrientation is
-              // 90 or 270 — swap w/h accordingly.
-              final so = _camera!.sensorOrientation;
-              final displayImageSize = (so == 90 || so == 270)
-                  ? Size(_frameSize!.height, _frameSize!.width)
-                  : _frameSize!;
-
-              final displayW = displayImageSize.width;
-              final displayH = displayImageSize.height;
-
-              // Calculate how to scale image with BoxFit.cover (same as live preview).
-              final scaleX = widgetW / displayW;
-              final scaleY = widgetH / displayH;
-              final scale = max(scaleX, scaleY); // Cover: fill viewport, crop edges
-
-              final scaledW = displayW * scale;
-              final scaledH = displayH * scale;
-
-              // Center the scaled image in viewport.
-              final offsetX = (widgetW - scaledW) / 2;
-              final offsetY = (widgetH - scaledH) / 2;
-
-              return Stack(
-                fit: StackFit.expand,
-                children: [
-                  // Border lines + optional name-strip highlight band.
-                  // Position with same logic as live preview for consistent corner placement.
-                  Positioned(
-                    left:   offsetX,
-                    top:    offsetY,
-                    width:  scaledW,
-                    height: scaledH,
-                    child: CustomPaint(
-                      painter: CardBorderPainter(
-                        rects:             _frozenRects,
-                        imageSize:         _frameSize!,
-                        previewSize:       Size(scaledW, scaledH),  // ← Use actual display size
-                        sensorOrientation: so,
-                        cropOffset:        ui.Offset.zero,
-                        nameStripFraction: _showEdgeMap
-                            ? _params.nameStripFraction
-                            : 0,
-                      ),
-                    ),
-                  ),
-
-                  // Spinner or result chip centred on each border.
-                  ..._frozenRects.asMap().entries.map((entry) {
-                    final i      = entry.key;
-                    final dRect  = _toDisplayRect(
-                      entry.value, widgetW, widgetH,
-                    );
-                    final result =
-                        i < _scanResults.length ? _scanResults[i] : null;
-                    return Positioned(
-                      left: dRect.center.dx - 20,
-                      top:  dRect.center.dy - 20,
-                      child: result == null
-                          ? const SizedBox(
-                              width: 40, height: 40,
-                              child: CircularProgressIndicator(
-                                color: Colors.white, strokeWidth: 3,
-                              ),
-                            )
-                          : _buildResultChip(context, result),
-                    );
-                  }),
-                ],
-              );
-            },
-          ),
-      ],
-    );
-  }
-
-  Widget _buildResultChip(BuildContext context, ScanResult result) =>
-      switch (result) {
-        MatchedResult(:final card, :final listingCardId) => _MatchedChip(
-            card:  card,
-            onTap: () => PrintingBrowserSheet.show(
-              context,
-              card:          card,
-              listingCardId: listingCardId,
-              onUpdated:     widget.onCardUpdated,
-            ),
-          ),
-        FailedResult(:final ocrText) => _FailedChip(
-            ocrText: ocrText,
-            onTap:   () => ManualEntryDialog.show(
-              context,
-              ocrText:     ocrText,
-              onCardAdded: widget.onCardAdded,
-            ),
-          ),
-      };
 }
 
 // ---------------------------------------------------------------------------

@@ -25,7 +25,6 @@ class _QuickScanScreenState extends State<QuickScanScreen> {
   final _scannerKey = GlobalKey<ScannerOverlayState>();
 
   bool _detecting     = false;
-  bool _scannerFrozen = false;
 
   // ---------------------------------------------------------------------------
   // Build
@@ -42,18 +41,16 @@ class _QuickScanScreenState extends State<QuickScanScreen> {
           Positioned.fill(
             child: ScannerOverlay(
               key:                _scannerKey,
-              isActive:           !_scannerFrozen,
+              isActive:           true,
               showCaptureButton:  false,
               showTuningButton:   true,
               onCardAdded:        null,
               onCardUpdated:      null,
               onDetectionChanged: (d) => setState(() => _detecting     = d),
-              onPhaseChanged:     (f) => setState(() => _scannerFrozen = f),
             ),
           ),
 
           // Capture button — pinned to bottom-centre above the system nav bar.
-          if (!_scannerFrozen)
             Positioned(
               bottom: 0,
               left:   0,
