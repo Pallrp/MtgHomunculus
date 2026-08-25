@@ -49,6 +49,51 @@ class ScryfallCard {
   });
 
   // ---------------------------------------------------------------------------
+  // Local bulk data
+  // ---------------------------------------------------------------------------
+
+  /// Build from a row of the local card database.
+  ///
+  /// [oracleText] and prices are absent by design — the bulk import deliberately
+  /// does not store them, since prices change daily and Scryfall's own page is
+  /// one tap away via the id.
+  factory ScryfallCard.fromLocal({
+    required String id,
+    required String name,
+    required String setCode,
+    required String setName,
+    required String collectorNumber,
+    required int finishes,
+    int? imageUpdatedAt,
+  }) =>
+      ScryfallCard(
+        scryfallId: id,
+        name: name,
+        setCode: setCode,
+        setName: setName,
+        collectorNumber: collectorNumber,
+        // Bitmask: 1 nonfoil, 2 foil, 4 etched.
+        nonFoilAvailable: finishes & 1 != 0,
+        foilAvailable: finishes & 2 != 0,
+        imageUri: imageUrlFor(id, imageUpdatedAt),
+      );
+
+  /// Scryfall image URLs are fully derivable, so none are stored.
+  ///
+  /// ```
+  /// https://cards.scryfall.io/normal/front/7/6/76ac5b70-...-e516.jpg?1783935730
+  ///                                       ^ ^ id[0], id[1]        ^ image_updated_at
+  /// ```
+  ///
+  /// The timestamp is a cache-buster: Scryfall re-scans cards, and without it a
+  /// CDN or disk cache would serve the old scan indefinitely.
+  static String? imageUrlFor(String id, int? imageUpdatedAt, {String size = 'normal'}) {
+    if (id.length < 2) return null;
+    final stamp = imageUpdatedAt == null ? '' : '?$imageUpdatedAt';
+    return 'https://cards.scryfall.io/$size/front/${id[0]}/${id[1]}/$id.jpg$stamp';
+  }
+
+  // ---------------------------------------------------------------------------
   // Scryfall API parsing
   // ---------------------------------------------------------------------------
 

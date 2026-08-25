@@ -19,6 +19,7 @@ import '../models/rotated_card_rect.dart';
 import '../models/scan_result.dart';
 import '../models/scryfall_card.dart';
 import '../services/card_detector.dart';
+import '../services/card_identifier.dart';
 import '../services/card_warp.dart';
 import '../services/dhash.dart';
 import '../services/scan_pipeline.dart';
@@ -137,6 +138,7 @@ class ScannerOverlayState extends State<ScannerOverlay> {
   HashIndex?      _index;
   bool            _indexTried = false;
   CardsDatabase?  _cardsDb;
+  CardIdentifier? _identifier;
   List<HashCandidate> _hashHits = const [];
   String              _dataStatus = '';
   DetectorParams _params      = const DetectorParams.defaults();
@@ -218,6 +220,7 @@ class ScannerOverlayState extends State<ScannerOverlay> {
   @override
   void dispose() {
     _recognizer?.close();
+    _identifier?.dispose();
     _cardsDb?.close();
     _stopStream();
     _controller?.dispose();
@@ -486,12 +489,21 @@ class ScannerOverlayState extends State<ScannerOverlay> {
     setState(() => _capturing = true);
 
     try {
+      // Identification runs entirely against local data — the card database and
+      // the hash index — so a scan makes no network request at all.
+      final db = _cardsDb ??= CardsDatabase();
+      if (!_indexTried) {
+        _indexTried = true;
+        _index = await HashIndex.load();
+      }
+      _identifier ??= CardIdentifier(db, _index);
+
       await ScanPipeline.run(
-        frame:             frame,
-        borders:           rects,
-        sensorOrientation: _camera!.sensorOrientation,
-        onCardAdded:       widget.onCardAdded,
-        nameStripFraction: _params.nameStripFraction,
+        frame:       frame,
+        borders:     rects,
+        identifier:  _identifier!,
+        db:          db,
+        onCardAdded: widget.onCardAdded,
         onResult: (i, result) {
           if (!mounted) return;
           setState(() {
