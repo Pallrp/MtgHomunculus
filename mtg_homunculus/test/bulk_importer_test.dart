@@ -160,20 +160,24 @@ void main() {
   });
 
   group('progress', () {
-    test('fraction is null without a denominator, so the UI can go indeterminate',
-        () {
+    test('fraction is null when a step has no denominator', () {
       expect(const ImportProgress(ImportStep.indexing).fraction, isNull);
-      expect(
-          const ImportProgress(ImportStep.inserting, current: 50, total: 200)
-              .fraction,
-          0.25);
     });
 
-    test('fraction cannot exceed 1 when an estimate is wrong', () {
-      expect(
-          const ImportProgress(ImportStep.inserting, current: 300, total: 200)
-              .fraction,
-          1.0);
+    test('count and fraction are independent — both measured, neither derived',
+        () {
+      // Cards inserted is a real tally; the bar comes from bytes consumed. The
+      // bulk file publishes no card count, so there is no total to divide by.
+      const p = ImportProgress(ImportStep.inserting, count: 48210, fraction: 0.58);
+      expect(p.count, 48210);
+      expect(p.fraction, 0.58);
+    });
+
+    test('reports bytes during download', () {
+      const p =
+          ImportProgress(ImportStep.downloading, count: 1024, fraction: 0.5);
+      expect(p.count, 1024);
+      expect(p.fraction, 0.5);
     });
   });
 }

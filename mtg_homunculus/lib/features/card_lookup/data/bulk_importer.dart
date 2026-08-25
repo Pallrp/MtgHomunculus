@@ -14,18 +14,24 @@ enum ImportStep { checking, downloading, inserting, indexing, done }
 
 /// Progress for the setup screen.
 ///
-/// [total] is 0 when a step has no meaningful denominator, in which case show an
-/// indeterminate bar for that step only.
+/// [count] is a real tally to show as a number — bytes downloaded, cards
+/// inserted. [fraction] drives the bar, and is null when a step genuinely has no
+/// denominator, in which case that step alone shows indeterminate.
+///
+/// These are deliberately separate. The bulk file's card count is not published,
+/// and counting the lines first is not available to us: the parse is streamed
+/// straight off the network, so a counting pass would mean downloading 74 MB
+/// twice or writing 595 MB to disk. Both numbers here are therefore *measured*
+/// rather than one being an estimate dressed up as a total.
 class ImportProgress {
   final ImportStep step;
-  final int current;
-  final int total;
-  const ImportProgress(this.step, {this.current = 0, this.total = 0});
-
-  double? get fraction => total > 0 ? (current / total).clamp(0.0, 1.0) : null;
+  final int count;
+  final double? fraction;
+  const ImportProgress(this.step, {this.count = 0, this.fraction});
 
   @override
-  String toString() => '$step $current/$total';
+  String toString() =>
+      '$step $count${fraction == null ? '' : ' ${(fraction! * 100).round()}%'}';
 }
 
 /// Imports Scryfall's `default_cards` bulk file into [CardsDatabase].
@@ -63,7 +69,6 @@ class BulkImporter {
     // Bridge the isolate's messages onto the progress stream, doing the inserts
     // as batches arrive.
     var inserted = 0;
-    var expected = 0;
     final seenSets = <String>{};
 
     unawaited(() async {
@@ -76,13 +81,14 @@ class BulkImporter {
             break;
           }
           if (msg is _Downloading) {
-            controller.add(ImportProgress(ImportStep.downloading,
-                current: msg.bytes, total: msg.total));
+            controller.add(ImportProgress(
+              ImportStep.downloading,
+              count: msg.bytes,
+              fraction: msg.total > 0 ? msg.bytes / msg.total : null,
+            ));
             continue;
           }
           if (msg is _Batch) {
-            expected = msg.estimatedTotal;
-
             // Sets first: cards.set_code is a foreign key, and the stream can
             // reach a card before anything else has mentioned its set.
             final newSets =
@@ -96,8 +102,13 @@ class BulkImporter {
                 mode: InsertMode.insertOrReplace));
 
             inserted += msg.cards.length;
-            controller.add(ImportProgress(ImportStep.inserting,
-                current: inserted, total: expected));
+            controller.add(ImportProgress(
+              ImportStep.inserting,
+              count: inserted,
+              fraction: msg.totalBytes > 0
+                  ? (msg.bytes / msg.totalBytes).clamp(0.0, 1.0)
+                  : null,
+            ));
             continue;
           }
           if (msg is _Done) {
@@ -166,8 +177,12 @@ class _Downloading {
 class _Batch {
   final List<CardsCompanion> cards;
   final List<CardSet> sets;
-  final int estimatedTotal;
-  const _Batch(this.cards, this.sets, this.estimatedTotal);
+
+  /// Compressed bytes consumed so far, against the published total. Exact, and
+  /// a faithful proxy for parse progress: the stream applies backpressure, so
+  /// bytes only arrive as fast as the parser eats them.
+  final int bytes, totalBytes;
+  const _Batch(this.cards, this.sets, this.bytes, this.totalBytes);
 }
 
 class _Done {
@@ -183,8 +198,8 @@ class _Failed {
 class _BulkMeta {
   final Uri uri;
   final String? updatedAt;
-  final int compressedSize, cardCount;
-  const _BulkMeta(this.uri, this.updatedAt, this.compressedSize, this.cardCount);
+  final int compressedSize;
+  const _BulkMeta(this.uri, this.updatedAt, this.compressedSize);
 }
 
 const _userAgent = 'MtgHomunculus/1.0';
@@ -218,8 +233,6 @@ Future<_BulkMeta?> _bulkMeta(HttpClient client) async {
     Uri.parse(uri),
     entry['updated_at'] as String?,
     ((entry['compressed_size'] ?? entry['size']) as num?)?.toInt() ?? 0,
-    // Not published; used only to give the insert step a denominator.
-    115962,
   );
 }
 
@@ -262,14 +275,15 @@ Future<void> _parseEntry(SendPort send) async {
       cards.add(row);
 
       if (cards.length >= BulkImporter._batchSize) {
-        send.send(_Batch(
-            List.of(cards), List.of(sets.values), meta.cardCount));
+        send.send(_Batch(List.of(cards), List.of(sets.values), downloaded,
+            meta.compressedSize));
         cards.clear();
         sets.clear();
       }
     }
     if (cards.isNotEmpty) {
-      send.send(_Batch(List.of(cards), List.of(sets.values), meta.cardCount));
+      send.send(_Batch(
+          List.of(cards), List.of(sets.values), downloaded, meta.compressedSize));
     }
 
     send.send(_Done(

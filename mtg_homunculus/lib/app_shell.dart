@@ -6,6 +6,8 @@ import 'sub_app.dart';
 import 'features/game_tracker/models/default_formats.dart';
 import 'features/game_tracker/screens/game_tracker_screen.dart';
 import 'core/logging/app_logger.dart';
+import 'features/card_lookup/data/cards_database.dart';
+import 'features/card_lookup/screens/card_data_setup_screen.dart';
 import 'features/card_lookup/screens/listing_home_screen.dart';
 import 'features/settings/models/game_tracker_settings.dart';
 import 'features/settings/models/setting_enums.dart';
@@ -68,6 +70,7 @@ class _AppShellState extends State<AppShell> {
   void dispose() {
     _lifecycleListener.dispose();
     _service.formatPresetsNotifier.removeListener(_onFormatPresetsChanged);
+    _cardsDb?.close();
     super.dispose();
   }
 
@@ -130,12 +133,41 @@ class _AppShellState extends State<AppShell> {
     );
   }
 
-  void _openCardLookup() {
-    Navigator.push<void>(
+  /// Card database, opened lazily and kept for the process lifetime.
+  ///
+  /// Opening is cheap — drift connects on first use — so this costs nothing until
+  /// the card lookup is actually entered.
+  CardsDatabase? _cardsDb;
+  CardsDatabase get _cards => _cardsDb ??= CardsDatabase();
+
+  Future<void> _openCardLookup() async {
+    // First run has no card data, and the sub-app cannot do anything useful
+    // without it: search returns nothing and identification has nothing to match
+    // against. Setup blocks; updates never do.
+    final imported = await _cards.metaValue(MetaKeys.bulkImportedAt);
+    if (!mounted) return;
+
+    if (imported == null || imported.isEmpty) {
+      await Navigator.push<void>(
+        context,
+        MaterialPageRoute(
+          builder: (ctx) => CardDataSetupScreen(
+            db: _cards,
+            // Replace the setup screen rather than stacking on it — there is
+            // nothing to go back to.
+            onReady: () => Navigator.of(ctx).pushReplacement(
+              MaterialPageRoute(builder: (_) => const ListingHomeScreen()),
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+
+    if (!mounted) return;
+    await Navigator.push<void>(
       context,
-      MaterialPageRoute(
-        builder: (_) => const ListingHomeScreen(),
-      ),
+      MaterialPageRoute(builder: (_) => const ListingHomeScreen()),
     );
   }
 
