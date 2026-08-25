@@ -394,7 +394,7 @@ class ScannerOverlayState extends State<ScannerOverlay> {
             ));
           }
           _hashHits = labelled;
-          AppLogger.d('HASH-DBG ${hits.length} within ${HashIndex.provisionalThreshold}'
+          AppLogger.d('HASH-DBG ${hits.length} within ${HashIndex.matchThreshold}'
               '${hits.isEmpty ? "" : "  best=${hits.first.distance}"}'
               '${labelled.isEmpty ? "" : "  ${labelled.first.label}"}');
         } catch (e, st) {

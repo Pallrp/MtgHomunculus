@@ -45,13 +45,33 @@ class HashIndex {
   static const _magic = 'MTGHASH1';
   static const _idBytes = 16;
 
-  /// Match threshold. **Provisional — not yet calibrated against real captures.**
+  /// Match threshold, **calibrated against 44 real captures on 2026-08-25**.
   ///
-  /// Synthetic degradation of reference art puts a well-framed capture at 0-1.4
-  /// and a 2% uniform inset at 13.8, but a real warp through a real camera has
-  /// never been measured against this index. Treat as a starting point, and set
-  /// it from device data before trusting it.
-  static const provisionalThreshold = 20;
+  /// ```
+  /// best distance   min 10 · median 16 · max 20      44 passes, 26 matched
+  /// candidates      min  1 · median  2 · max  7
+  /// ```
+  ///
+  /// Two things that measurement settled, both contrary to what synthetic
+  /// degradation of reference art predicted (0-1.4 for a clean capture):
+  ///
+  /// **There is a floor of ~10 that every capture pays.** Not one landed below
+  /// it. Intermittent framing error cannot produce a floor — it would give a
+  /// bimodal spread with clean captures near zero. Something systematic costs
+  /// ~10 bits on every frame; an illumination gradient across the card is the
+  /// leading hypothesis and is untested. Note `dhash_test` proves invariance to
+  /// **uniform** brightness scaling only, which says nothing about a ramp.
+  ///
+  /// **Raising this is the wrong lever.** At 20 the median is already 2
+  /// candidates and the max is 7; loosening trades missed matches for constant
+  /// Choose Version prompts. Five of the 26 hits sat exactly at 20, so the
+  /// distribution is censored here — some misses are matches just outside.
+  ///
+  /// Left as-is deliberately. Recall is ~59% but **precision was 100%** across
+  /// the sample, and combined with the OCR path that identifies a card inside
+  /// two frames. A scanner that occasionally waits half a second is fine; one
+  /// that confidently adds the wrong card is not.
+  static const matchThreshold = 20;
 
   final Uint8List _bytes;
   final int _count;
@@ -188,7 +208,7 @@ class HashIndex {
   /// Measured on the full index, ~9% of cards have a hash-identical twin.
   List<HashMatch> nearest(
     Uint8List hash, {
-    int threshold = provisionalThreshold,
+    int threshold = matchThreshold,
     int limit = 12,
   }) {
     if (hash.length != _hashLen) return const [];
