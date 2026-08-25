@@ -138,6 +138,7 @@ class ScannerOverlayState extends State<ScannerOverlay> {
   bool            _indexTried = false;
   CardsDatabase?  _cardsDb;
   List<HashCandidate> _hashHits = const [];
+  String              _dataStatus = '';
   DetectorParams _params      = const DetectorParams.defaults();
   Uint8List?     _liveEdgeMap;
 
@@ -278,6 +279,58 @@ class ScannerOverlayState extends State<ScannerOverlay> {
       await Future.delayed(const Duration(milliseconds: 300));
       _canProcess = true;
     });
+  }
+
+  /// [dev-tool] Fetch the match index so a real capture can be measured against
+  /// it. Belongs on the card data screen; this is the stopgap.
+  Future<void> _downloadIndex() async {
+    setState(() => _dataStatus = 'Downloading match index…');
+    final ok = await HashIndex.download(onProgress: (got, total) {
+      if (!mounted) return;
+      final mb = (got / (1024 * 1024)).toStringAsFixed(1);
+      setState(() => _dataStatus = total > 0
+          ? 'Downloading… $mb MB  ${(100 * got / total).round()}%'
+          : 'Downloading… $mb MB');
+    });
+    if (!mounted) return;
+
+    // Force the next debug pass to pick it up.
+    _indexTried = false;
+    _index = null;
+    _hashHits = const [];
+
+    if (!ok) {
+      setState(() => _dataStatus = 'Match index download FAILED — see log');
+      return;
+    }
+    final idx = await HashIndex.load();
+    if (!mounted) return;
+    setState(() {
+      _index = idx;
+      _indexTried = true;
+      _dataStatus = idx == null
+          ? 'Downloaded but did not parse — version mismatch?'
+          : 'Match index ready — ${idx.count} cards';
+    });
+  }
+
+  /// [dev-tool] Clear the first-run gate so setup runs again on next entry.
+  ///
+  /// Clears `bulk_imported_at` rather than deleting `cards.db`, which drift has
+  /// open. The import replaces rows by primary key, so re-running it is safe.
+  Future<void> _resetCardData() async {
+    final db = _cardsDb ??= CardsDatabase();
+    await db.setMeta(MetaKeys.bulkImportedAt, '');
+    try {
+      final f = await HashIndex.file();
+      if (await f.exists()) await f.delete();
+    } catch (_) {}
+    if (!mounted) return;
+    _index = null;
+    _indexTried = true;
+    _hashHits = const [];
+    setState(() => _dataStatus =
+        'Card data cleared — leave and re-enter Card Lookup to re-run setup');
   }
 
   /// [dev-tool] Warp the best detection, crop the collector band, OCR it.
@@ -566,6 +619,9 @@ class ScannerOverlayState extends State<ScannerOverlay> {
                 await DetectorParams.setCurrent(p);
               },
               onEdgeMapToggled: (v) => setState(() => _showEdgeMap = v),
+              onDownloadIndex:   _downloadIndex,
+              onResetCardData:   _resetCardData,
+              dataStatus:        _dataStatus,
               onOcrDebugToggled: (v) => setState(() {
                 _showOcrDebug = v;
                 if (!v) {

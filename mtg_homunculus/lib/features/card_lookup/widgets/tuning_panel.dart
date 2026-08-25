@@ -26,6 +26,19 @@ class TuningPanel extends StatefulWidget {
   final void Function(DetectorParams) onParamsChanged;
   final void Function(bool)           onEdgeMapToggled;
   final void Function(bool)           onOcrDebugToggled;
+
+  /// [dev-tool] Fetch `hash_index.bin` from the release. The proper home for this
+  /// is the card data screen (see local_data_store.md); this is the stopgap that
+  /// makes the match threshold measurable before that screen exists.
+  final VoidCallback                  onDownloadIndex;
+
+  /// [dev-tool] Clear `bulk_imported_at` so the next entry to the sub-app re-runs
+  /// setup. Clears the gate rather than deleting the database, which drift has
+  /// open.
+  final VoidCallback                  onResetCardData;
+
+  /// Status line under the data actions — progress, result, or empty.
+  final String                        dataStatus;
   final VoidCallback                  onClose;
 
   const TuningPanel({
@@ -36,6 +49,9 @@ class TuningPanel extends StatefulWidget {
     required this.onParamsChanged,
     required this.onEdgeMapToggled,
     required this.onOcrDebugToggled,
+    required this.onDownloadIndex,
+    required this.onResetCardData,
+    required this.dataStatus,
     required this.onClose,
   });
 
@@ -77,6 +93,7 @@ class _TuningPanelState extends State<TuningPanel> {
                 children: [
                   _buildEdgeToggle(context),
                   _buildOcrToggle(context),
+                  _buildDataActions(context),
                   const SizedBox(height: 8),
                   _buildResetRow(context),
                   const SizedBox(height: 12),
@@ -303,6 +320,52 @@ class _TuningPanelState extends State<TuningPanel> {
     value:    widget.showEdgeMap,
     onChanged: widget.onEdgeMapToggled,
   );
+
+  /// [dev-tool] Card data actions, until the card data screen is built.
+  Widget _buildDataActions(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(top: 4, bottom: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.download_rounded, size: 16),
+                  label: const Text('Match index'),
+                  onPressed: widget.onDownloadIndex,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.refresh_rounded, size: 16),
+                  label: const Text('Re-run setup'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: theme.colorScheme.error,
+                  ),
+                  onPressed: widget.onResetCardData,
+                ),
+              ),
+            ],
+          ),
+          if (widget.dataStatus.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                widget.dataStatus,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  fontFamily: 'monospace',
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
 
   Widget _buildOcrToggle(BuildContext context) => SwitchListTile(
     contentPadding: EdgeInsets.zero,
