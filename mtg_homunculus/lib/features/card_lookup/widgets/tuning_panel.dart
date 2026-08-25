@@ -23,9 +23,13 @@ class TuningPanel extends StatefulWidget {
   final bool           showEdgeMap;
   final bool           showOcrDebug;
 
+  /// Whether the scanner acts on one detection per capture rather than all.
+  final bool           singleRect;
+
   final void Function(DetectorParams) onParamsChanged;
   final void Function(bool)           onEdgeMapToggled;
   final void Function(bool)           onOcrDebugToggled;
+  final void Function(bool)           onSingleRectToggled;
 
   /// [dev-tool] Fetch `hash_index.bin` from the release. The proper home for this
   /// is the card data screen (see local_data_store.md); this is the stopgap that
@@ -46,9 +50,11 @@ class TuningPanel extends StatefulWidget {
     required this.params,
     required this.showEdgeMap,
     required this.showOcrDebug,
+    required this.singleRect,
     required this.onParamsChanged,
     required this.onEdgeMapToggled,
     required this.onOcrDebugToggled,
+    required this.onSingleRectToggled,
     required this.onDownloadIndex,
     required this.onResetCardData,
     required this.dataStatus,
@@ -93,6 +99,7 @@ class _TuningPanelState extends State<TuningPanel> {
                 children: [
                   _buildEdgeToggle(context),
                   _buildOcrToggle(context),
+                  _buildSingleRectToggle(context),
                   _buildDataActions(context),
                   const SizedBox(height: 8),
                   _buildResetRow(context),
@@ -366,6 +373,21 @@ class _TuningPanelState extends State<TuningPanel> {
       ),
     );
   }
+
+  /// [dev-tool] Compare single-card capture against acting on every detection.
+  ///
+  /// Off is the designed behaviour, not a debug mode — the switch exists to
+  /// measure what the alternative costs, and is expected to be removed once
+  /// that is settled.
+  Widget _buildSingleRectToggle(BuildContext context) => SwitchListTile(
+    contentPadding: EdgeInsets.zero,
+    title: const Text('Identify every detection'),
+    subtitle: const Text(
+      'Off: outline and capture only the largest card-shaped quad',
+    ),
+    value:    !widget.singleRect,
+    onChanged: (v) => widget.onSingleRectToggled(!v),
+  );
 
   Widget _buildOcrToggle(BuildContext context) => SwitchListTile(
     contentPadding: EdgeInsets.zero,

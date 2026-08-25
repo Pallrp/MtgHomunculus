@@ -141,6 +141,50 @@ class RotatedCardRect {
     return CardQuality.good;
   }
 
+  /// Whether this quad is plausibly a whole card at all, as a sort tier.
+  ///
+  /// Only [CardQuality.offShape] is demoted. The other three all describe a real
+  /// card the user can fix by moving the phone; offShape says the quad is not a
+  /// whole card, which is the one state where a smaller rival is more likely to
+  /// be the thing being aimed at.
+  int get _plausibility => quality == CardQuality.offShape ? 1 : 0;
+
+  /// The single detection to draw and capture, or null when there are none.
+  ///
+  /// **Ranked by area, not by quality.** Quality-first looks tempting and is
+  /// wrong: a card held at arm's length is amber `tooFar` while a lucky patch of
+  /// wood grain can score `good`, so ranking on quality would move the border
+  /// onto the phantom — and then show it green. Area keeps the border on
+  /// whatever fills the frame, which is what the user is pointing at, and lets
+  /// the quality label do its own job of saying how to fix it.
+  ///
+  /// [_plausibility] is the one exception, and exists because area alone would
+  /// let a large clipped or non-card quad outrank a small genuine one.
+  ///
+  /// Area is the quad's own [getArea], not its bounding box: a card rotated 45°
+  /// has a bounding box roughly twice its area, which would otherwise hand every
+  /// tie to whichever candidate happened to be more diagonal.
+  static RotatedCardRect? best(List<RotatedCardRect> rects) {
+    if (rects.isEmpty) return null;
+    var winner = rects.first;
+    var winnerArea = winner.getArea();
+    for (final r in rects.skip(1)) {
+      if (r._plausibility != winner._plausibility) {
+        if (r._plausibility < winner._plausibility) {
+          winner = r;
+          winnerArea = r.getArea();
+        }
+        continue;
+      }
+      final area = r.getArea();
+      if (area > winnerArea) {
+        winner = r;
+        winnerArea = area;
+      }
+    }
+    return winner;
+  }
+
   /// Check if a point is inside this rotated quadrilateral.
   /// Uses the cross-product method for point-in-polygon testing.
   bool containsPoint(ui.Offset point) {

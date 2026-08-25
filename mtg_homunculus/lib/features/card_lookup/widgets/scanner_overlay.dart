@@ -114,6 +114,25 @@ class ScannerOverlayState extends State<ScannerOverlay> {
   Size?                  _frameSize;   // sensor frame dimensions (width × height)
   bool                   _canProcess = true;
 
+  /// Act on one card per capture — see [_shownRects].
+  ///
+  /// [dev-tool] toggle only, so the two behaviours can be compared on device.
+  /// The flow this belongs to is single-card by design
+  /// (`single_card_capture_flow.md`).
+  bool                   _singleRect = true;
+
+  /// The detections the user is shown, and the ones capture will act on.
+  ///
+  /// **These must be the same list.** Drawing one border while identifying every
+  /// detection would make the overlay lie about what the button does — the user
+  /// would see one card outlined and get a Choose Version sheet for a patch of
+  /// wood grain they were never told about.
+  List<RotatedCardRect> get _shownRects {
+    if (!_singleRect) return _liveRects;
+    final best = RotatedCardRect.best(_liveRects);
+    return best == null ? const [] : [best];
+  }
+
   // ── Identification ────────────────────────────────────────────────────────
   bool       _capturing   = false;  // pipeline in flight
   ScanResult? _lastResult;          // most recent outcome, shown briefly
@@ -274,9 +293,11 @@ class ScannerOverlayState extends State<ScannerOverlay> {
         }
       }
 
-      if (_showOcrDebug) {
+      if (_showOcrDebug && mounted) {
+        // The readout must show the card the border is drawn on, or it reports
+        // on a quad the user was never shown.
         // Deliberately not awaited — the readout must never slow detection.
-        unawaited(_runOcrDebug(frame, rects));
+        unawaited(_runOcrDebug(frame, _shownRects));
       }
 
       // Throttle to ~2 fps.
@@ -480,9 +501,16 @@ class ScannerOverlayState extends State<ScannerOverlay> {
   Future<void> _capture() async {
     if (!_cameraReady || _capturing || _lastFrame == null) return;
     final frame = _lastFrame!;
-    final rects = _liveRects;
+    final rects = _shownRects;
 
     if (rects.isEmpty) return;
+
+    // The number that decides whether single-rect earns its place: how many
+    // detections it discarded, and whether the kept one was the card.
+    AppLogger.d('Capture: ${_liveRects.length} detected, '
+        'identifying ${rects.length}'
+        '${_singleRect ? " (single)" : " (all)"}'
+        '  quality=${rects.map((r) => r.quality.name).join(",")}');
 
     // The preview keeps running. There is no inspection step to freeze for:
     // the stream frame is the capture (spike S3), so stopping it would only
@@ -632,11 +660,13 @@ class ScannerOverlayState extends State<ScannerOverlay> {
               params:       _params,
               showEdgeMap:  _showEdgeMap,
               showOcrDebug: _showOcrDebug,
+              singleRect:   _singleRect,
               onParamsChanged: (p) async {
                 setState(() => _params = p);
                 await DetectorParams.setCurrent(p);
               },
               onEdgeMapToggled: (v) => setState(() => _showEdgeMap = v),
+              onSingleRectToggled: (v) => setState(() => _singleRect = v),
               onDownloadIndex:   _downloadIndex,
               onResetCardData:   _resetCardData,
               dataStatus:        _dataStatus,
@@ -754,7 +784,7 @@ class ScannerOverlayState extends State<ScannerOverlay> {
                 height: scaledH,
                 child: CustomPaint(
                   painter: CardBorderPainter(
-                    rects:             _liveRects,
+                    rects:             _shownRects,
                     imageSize:         _frameSize!,
                     previewSize:       Size(scaledW, scaledH),
                     sensorOrientation: so,
@@ -778,7 +808,7 @@ class ScannerOverlayState extends State<ScannerOverlay> {
                 left: 0, right: 0, bottom: 24,
                 child: Center(
                   child: CaptureButton(
-                    detecting: _liveRects.isNotEmpty,
+                    detecting: _shownRects.isNotEmpty,
                     onTap:     capture,
                   ),
                 ),
