@@ -45,6 +45,13 @@ void main(List<String> args) async {
       '${DHash.bitCount} bits  ${DHash.byteLength} bytes  '
       'version ${DHash.version}');
 
+  // The image cache may hold digital-only printings from an earlier fetch. They
+  // can never be scanned, and indexing them puts entries in the index for cards
+  // the app's database does not hold -- which the on-device discrepancy queue
+  // would then try to reconcile on every launch, forever.
+  final scannable = await _scannableIds();
+  stdout.writeln('bulk    ${scannable.length} non-digital cards');
+
   // ── collect ───────────────────────────────────────────────────────────────
   stdout.write('scan    listing images...');
   var files = await dir
@@ -53,6 +60,16 @@ void main(List<String> args) async {
       .map((e) => e.path)
       .toList();
   files.sort();
+
+  final before = files.length;
+  files = files
+      .where((f) => scannable.contains(_idOf(f)))
+      .toList();
+  final dropped = before - files.length;
+  if (dropped > 0) {
+    stdout.writeln('scan    $dropped digital-only images skipped');
+  }
+
   if (limit != null && files.length > limit) files = files.sublist(0, limit);
   stdout.writeln('\rscan    ${files.length} images'
       '${limit != null ? '  (--limit $limit)' : ''}          ');
@@ -153,15 +170,41 @@ class _ChunkResult {
   const _ChunkResult(this.entries, this.failures);
 }
 
+/// Card ids that exist as physical printings, read from the bulk file.
+Future<Set<String>> _scannableIds() async {
+  final f = File(bulkPath);
+  if (!await f.exists()) {
+    stderr.writeln('No bulk file at $bulkPath — run fetch_card_images.dart first');
+    exit(1);
+  }
+  final ids = <String>{};
+  await for (final raw in f
+      .openRead()
+      .transform(utf8.decoder)
+      .transform(const LineSplitter())) {
+    final line = raw.trim();
+    if (line.length < 2 || line[0] != '{') continue;
+    try {
+      final c = jsonDecode(line) as Map<String, dynamic>;
+      if (c['digital'] == true) continue;
+      final id = c['id'] as String?;
+      if (id != null) ids.add(id);
+    } catch (_) {}
+  }
+  return ids;
+}
+
+String _idOf(String path) => path
+    .split(Platform.pathSeparator)
+    .last
+    .replaceAll(RegExp(r'\.jpg$'), '');
+
 _ChunkResult _hashChunk(List<String> paths) {
   final entries = <_Entry>[];
   final failures = <String>[];
 
   for (final path in paths) {
-    final id = path
-        .split(Platform.pathSeparator)
-        .last
-        .replaceAll(RegExp(r'\.jpg$'), '');
+    final id = _idOf(path);
     try {
       final decoded = img.decodeJpg(File(path).readAsBytesSync());
       if (decoded == null) {

@@ -76,6 +76,34 @@ void main() {
     });
   });
 
+  group('same-named faces', () {
+    test('a doubled face name collapses to one', () {
+      expect(CardsDatabase.normaliseName('Sol Ring // Sol Ring'), 'sol ring');
+      expect(CardsDatabase.normaliseName('Thalia, Guardian of Thraben // Thalia, Guardian of Thraben'),
+          'thalia guardian of thraben');
+    });
+
+    test('faces with different names stay joined', () {
+      expect(
+        CardsDatabase.normaliseName('Delver of Secrets // Insectile Aberration'),
+        'delver of secrets  insectile aberration',
+      );
+    });
+
+    test('the doubled form no longer outranks the single-faced printing', () async {
+      await seed([
+        ('Sol Ring', 'c21', '263'),
+        ('Sol Ring // Sol Ring', 'sld', '1'),
+        ('Sol Grail', 'jou', '164'),
+      ]);
+      await db.rebuildNameIndex();
+
+      final got = await db.nameCandidates('sol rlng');
+      expect(got.first, 'Sol Ring',
+          reason: 'the doubled name carries every trigram twice and would win');
+    });
+  });
+
   group('name index', () {
     test('indexes unique names, not card rows', () async {
       await seed([

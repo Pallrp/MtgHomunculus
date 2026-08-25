@@ -256,6 +256,18 @@ class CardsDatabase extends _$CardsDatabase {
   /// of mismatch for free. Names are stored normalised in the FTS table, so the
   /// same function must be used on both sides — see [_indexNames].
   static String normaliseName(String s) {
+    // Collapse a card whose two faces carry the SAME name: Scryfall stores
+    // reversible and meld printings as 'Sol Ring // Sol Ring', which normalises
+    // to 'sol ring sol ring' and therefore contains every trigram of the real
+    // name TWICE. Left alone it outranks the ordinary single-faced printing that
+    // a scan is actually looking at -- observed on the device database
+    // 2026-08-25 for Sol Ring, Thalia and Lightning Bolt.
+    //
+    // Faces with DIFFERENT names are left joined on purpose: a scan sees one
+    // side, and the combined string still carries that side's trigrams.
+    final faces = s.split(' // ');
+    if (faces.length == 2 && faces[0] == faces[1]) s = faces[0];
+
     final b = StringBuffer();
     for (final r in s.toLowerCase().runes) {
       if ((r >= 97 && r <= 122) || (r >= 48 && r <= 57)) {

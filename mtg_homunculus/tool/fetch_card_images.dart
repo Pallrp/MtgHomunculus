@@ -203,7 +203,7 @@ class _Target {
 /// leading-brace check or the parse, and is skipped.
 Future<List<_Target>> _collectTargets(File bulk, {int? limit}) async {
   final targets = <_Target>[];
-  var seen = 0, skippedNoUrl = 0;
+  var seen = 0, skippedNoUrl = 0, skippedDigital = 0;
   final statusCounts = <String, int>{};
 
   final lines = bulk
@@ -223,6 +223,15 @@ Future<List<_Target>> _collectTargets(File bulk, {int? limit}) async {
       continue;
     }
     seen++;
+
+    // Digital-only printings never exist as physical cards, so they can never
+    // be scanned. The app's importer skips them too -- leaving them in the index
+    // put 8,639 entries in it for cards cards.db does not hold, which the
+    // discrepancy queue would then try to reconcile forever.
+    if (card['digital'] == true) {
+      skippedDigital++;
+      continue;
+    }
 
     final status = card['image_status'] as String? ?? 'missing';
     statusCounts[status] = (statusCounts[status] ?? 0) + 1;
@@ -245,6 +254,9 @@ Future<List<_Target>> _collectTargets(File bulk, {int? limit}) async {
       final mark = _usableStatuses.contains(s) ? 'keep' : 'SKIP';
       stdout.writeln('        ${s.padRight(13)} ${n.toString().padLeft(7)}  $mark');
     }
+  }
+  if (skippedDigital > 0) {
+    stdout.writeln('        digital-only  ${skippedDigital.toString().padLeft(7)}  SKIP');
   }
   if (skippedNoUrl > 0) {
     stdout.writeln('        no image_uris ${skippedNoUrl.toString().padLeft(5)}  SKIP');
