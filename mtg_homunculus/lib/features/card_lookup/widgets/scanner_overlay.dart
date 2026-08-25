@@ -24,6 +24,7 @@ import '../services/card_warp.dart';
 import '../services/dhash.dart';
 import '../services/scan_pipeline.dart';
 import 'card_border_painter.dart';
+import 'choose_version_sheet.dart';
 import 'manual_entry_dialog.dart';
 import 'printing_browser_sheet.dart';
 import 'ocr_debug_panel.dart';
@@ -504,6 +505,11 @@ class ScannerOverlayState extends State<ScannerOverlay> {
         identifier:  _identifier!,
         db:          db,
         onCardAdded: widget.onCardAdded,
+        onAmbiguous: (candidates) async {
+          if (!mounted) return null;
+          return ChooseVersionSheet.show(context,
+              candidates: candidates, db: db);
+        },
         onResult: (i, result) {
           if (!mounted) return;
           setState(() {

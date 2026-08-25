@@ -35,6 +35,7 @@ class ScanPipeline {
     required CardsDatabase db,
     required void Function(int index, ScanResult result) onResult,
     Future<String> Function(ScryfallCard card)? onCardAdded,
+    Future<Card?> Function(List<Card> candidates)? onAmbiguous,
   }) async {
     for (var i = 0; i < borders.length; i++) {
       onResult(i, await _processOne(
@@ -43,6 +44,7 @@ class ScanPipeline {
         identifier: identifier,
         db: db,
         onCardAdded: onCardAdded,
+        onAmbiguous: onAmbiguous,
       ));
     }
   }
@@ -55,6 +57,7 @@ class ScanPipeline {
     required CardIdentifier identifier,
     required CardsDatabase db,
     required Future<String> Function(ScryfallCard)? onCardAdded,
+    required Future<Card?> Function(List<Card>)? onAmbiguous,
   }) async {
     final id = await identifier.identify(frame, border);
 
@@ -63,15 +66,22 @@ class ScanPipeline {
         '  ${id.candidates.length} candidate(s)'
         '${id.best == null ? "" : "  ${id.best!.name}"}');
 
-    final best = id.best;
+    var best = id.best;
     if (best == null) return FailedResult(border, id.ocrText);
 
-    // Several candidates is genuinely ambiguous and belongs in Choose Version.
-    // Until that exists the strongest is taken, and the log records the rest so
-    // it is visible how often this is happening.
+    // Ambiguity is structural, not a failure: reprints hash identically, and a
+    // name alone cannot determine a printing. Ask rather than guess — a silently
+    // wrong printing is hard to notice and costs more to correct the longer a
+    // session runs.
     if (id.isAmbiguous) {
       AppLogger.d('ScanPipeline: ambiguous — '
           '${id.candidates.map((c) => "${c.name} ${c.setCode}/${c.collectorNumber}").join(", ")}');
+      if (onAmbiguous != null) {
+        final picked = await onAmbiguous(id.candidates);
+        // Skipped: nothing is added, and there is no half-added row to clean up.
+        if (picked == null) return FailedResult(border, id.ocrText);
+        best = picked;
+      }
     }
 
     final card = await toScryfallCard(db, best);
