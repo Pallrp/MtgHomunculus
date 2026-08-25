@@ -140,6 +140,21 @@ class CardWarp {
   // Regions
   // ---------------------------------------------------------------------------
 
+  /// The title band of a canonical card — where the name is printed.
+  ///
+  /// Returns a **region view** of [card]; same lifetime, do not dispose
+  /// separately.
+  ///
+  /// Roughly 2.5x the height of the collector-number type, which is why the name
+  /// reads at distances where the collector number does not.
+  static cv.Mat nameBand(cv.Mat card) {
+    final x = (card.cols * 0.05).round();
+    final y = (card.rows * 0.035).round();
+    final w = (card.cols * 0.90).round().clamp(1, card.cols - x);
+    final h = (card.rows * 0.085).round().clamp(1, card.rows - y);
+    return card.region(cv.Rect(x, y, w, h));
+  }
+
   /// The collector-number band of a canonical card.
   ///
   /// Returns a **region view** of [card] — same lifetime, do not dispose
