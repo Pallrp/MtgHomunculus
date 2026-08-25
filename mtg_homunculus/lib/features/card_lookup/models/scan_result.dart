@@ -13,18 +13,17 @@ sealed class ScanResult {
   const ScanResult(this.border);
 }
 
-/// The pipeline found a matching card on Scryfall.
-///
-/// [listingCardId] is the UUID of the [ListingCard] that was created (or whose
-/// quantity was incremented) by [onCardAdded].  It is used by the printing
-/// browser to know which row to update.
+/// The pipeline identified the card and it was added to the active list.
 final class MatchedResult extends ScanResult {
   final ScryfallCard card;
 
-  /// UUID of the created or quantity-incremented [ListingCard].
-  final String listingCardId;
+  /// Entry id of the created or quantity-incremented row in `collection.db`.
+  ///
+  /// Zero when the result was not persisted — [ScanPipeline] is usable without
+  /// an `onCardAdded`, and the printing browser has nothing to update then.
+  final int entryId;
 
-  const MatchedResult(super.border, this.card, this.listingCardId);
+  const MatchedResult(super.border, this.card, this.entryId);
 }
 
 /// The card was identified, and is the same one that was just added.

@@ -24,7 +24,7 @@ class ManualEntryDialog extends StatefulWidget {
 
   /// Called with the matched card when the user taps **Add**.
   /// Null is valid for Quick Scan (no listing) — the dialog still closes.
-  final Future<String> Function(ScryfallCard)? onCardAdded;
+  final Future<int> Function(ScryfallCard)? onCardAdded;
 
   const ManualEntryDialog({
     super.key,
@@ -36,7 +36,7 @@ class ManualEntryDialog extends StatefulWidget {
   static Future<void> show(
     BuildContext context, {
     required String ocrText,
-    Future<String> Function(ScryfallCard)? onCardAdded,
+    Future<int> Function(ScryfallCard)? onCardAdded,
   }) =>
       showDialog<void>(
         context: context,

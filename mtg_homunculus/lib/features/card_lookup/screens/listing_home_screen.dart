@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-import '../models/listing_index_entry.dart';
-import '../services/listing_storage.dart';
+import '../data/collection_database.dart';
+import '../data/listing_import.dart';
 import 'listing_detail_screen.dart';
 import 'quick_scan_screen.dart';
 
@@ -12,9 +12,9 @@ import 'quick_scan_screen.dart';
 
 /// Entry point for the Card Lookup sub-app.
 ///
-/// Shows all saved [CardListing]s and lets the user create, open, or delete
-/// them.  Camera permission is requested here so the dialog fires once,
-/// up-front — not mid-drag or mid-scan.
+/// Shows every list and lets the user create, open, or delete them.  Camera
+/// permission is requested here so the dialog fires once, up-front — not
+/// mid-drag or mid-scan.
 class ListingHomeScreen extends StatefulWidget {
   const ListingHomeScreen({super.key});
 
@@ -23,9 +23,12 @@ class ListingHomeScreen extends StatefulWidget {
 }
 
 class _ListingHomeScreenState extends State<ListingHomeScreen> {
-  PermissionStatus          _cameraStatus = PermissionStatus.denied;
-  List<ListingIndexEntry>   _listings     = [];
-  bool                      _loading      = true;
+  PermissionStatus _cameraStatus = PermissionStatus.denied;
+  List<CardList>   _listings     = [];
+  Map<int, ({int copies, int unique})> _counts = const {};
+  bool             _loading      = true;
+
+  CollectionDatabase get _db => CollectionDatabase.instance;
 
   // ---------------------------------------------------------------------------
   // Init
@@ -35,7 +38,7 @@ class _ListingHomeScreenState extends State<ListingHomeScreen> {
   void initState() {
     super.initState();
     _requestCamera();
-    _loadIndex();
+    _load();
   }
 
   Future<void> _requestCamera() async {
@@ -43,11 +46,17 @@ class _ListingHomeScreenState extends State<ListingHomeScreen> {
     if (mounted) setState(() => _cameraStatus = status);
   }
 
-  Future<void> _loadIndex() async {
-    final listings = await ListingStorage.loadIndex();
+  Future<void> _load() async {
+    // Carries any pre-collection.db JSON listings across. A no-op on every run
+    // but the first, and on a fresh install.
+    await ListingImport.run(_db);
+
+    final listings = await _db.allLists();
+    final counts   = await _db.countsForAll();
     if (mounted) {
       setState(() {
         _listings = listings;
+        _counts   = counts;
         _loading  = false;
       });
     }
@@ -59,12 +68,12 @@ class _ListingHomeScreenState extends State<ListingHomeScreen> {
 
   /// Push [ListingDetailScreen] and reload the index on return (card count
   /// may have changed while scanning).
-  Future<void> _openListing(String id) async {
+  Future<void> _openListing(int id) async {
     await Navigator.push<void>(
       context,
-      MaterialPageRoute(builder: (_) => ListingDetailScreen(listingId: id)),
+      MaterialPageRoute(builder: (_) => ListingDetailScreen(listId: id)),
     );
-    _loadIndex();
+    _load();
   }
 
   /// Show the "New listing" dialog.  On confirm, create the listing and open it.
@@ -74,14 +83,27 @@ class _ListingHomeScreenState extends State<ListingHomeScreen> {
       builder: (_) => const _CreateListingDialog(),
     );
     if (name == null || name.isEmpty || !mounted) return;
-    final listing = await ListingStorage.createListing(name: name);
-    await _openListing(listing.id);
+    final list = await _db.createList(name);
+    await _openListing(list.id);
   }
 
-  /// Optimistically remove the listing from the UI, then delete from storage.
-  void _deleteListing(String id) {
-    setState(() => _listings.removeWhere((e) => e.id == id));
-    ListingStorage.deleteListing(id); // fire-and-forget
+  /// Optimistically remove the list from the UI, then delete it.
+  ///
+  /// The default list refuses to delete, so it is put straight back rather than
+  /// vanishing from the screen while surviving in the database.
+  Future<void> _deleteListing(CardList list) async {
+    setState(() => _listings.removeWhere((e) => e.id == list.id));
+    final gone = await _db.deleteList(list.id);
+    if (!mounted) return;
+    if (!gone) {
+      await _load();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content:  Text('The scan list cannot be deleted'),
+        duration: Duration(seconds: 2),
+      ));
+      return;
+    }
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content:  Text('Listing deleted'),
@@ -175,6 +197,16 @@ class _ListingHomeScreenState extends State<ListingHomeScreen> {
       separatorBuilder: (_, _) => const Divider(height: 1),
       itemBuilder: (_, index) {
         final entry = _listings[index];
+        // The default list has no delete action at all — swiping it would only
+        // be refused, and offering a gesture that never works is worse than
+        // omitting it.
+        if (entry.isDefault) {
+          return _ListingRow(
+            entry: entry,
+            counts: _counts[entry.id],
+            onTap: () => _openListing(entry.id),
+          );
+        }
         return Dismissible(
           key:       ValueKey(entry.id),
           direction: DismissDirection.endToStart,
@@ -187,9 +219,10 @@ class _ListingHomeScreenState extends State<ListingHomeScreen> {
               color: Colors.white,
             ),
           ),
-          onDismissed: (_) => _deleteListing(entry.id),
+          onDismissed: (_) => _deleteListing(entry),
           child: _ListingRow(
             entry: entry,
+            counts: _counts[entry.id],
             onTap: () => _openListing(entry.id),
           ),
         );
@@ -203,17 +236,33 @@ class _ListingHomeScreenState extends State<ListingHomeScreen> {
 // ---------------------------------------------------------------------------
 
 class _ListingRow extends StatelessWidget {
-  final ListingIndexEntry entry;
-  final VoidCallback      onTap;
+  final CardList entry;
 
-  const _ListingRow({required this.entry, required this.onTap});
+  /// Null while counts are still loading, or for a list with no entries.
+  final ({int copies, int unique})? counts;
+
+  final VoidCallback onTap;
+
+  const _ListingRow({
+    required this.entry,
+    required this.counts,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final cs       = Theme.of(context).colorScheme;
-    final count    = entry.cardCount;
-    final subtitle = '$count ${count == 1 ? 'card' : 'cards'}'
-        ' · ${_formatDate(entry.createdAt)}';
+    final cs      = Theme.of(context).colorScheme;
+    final copies  = counts?.copies ?? 0;
+    final unique  = counts?.unique ?? 0;
+    // Copies and unique rows differ as soon as a card is held in multiples, and
+    // the difference is the interesting part — showing one number hides it.
+    final subtitle = [
+      '$copies ${copies == 1 ? 'card' : 'cards'}',
+      if (unique != copies) '$unique unique',
+      _formatDate(
+        DateTime.fromMillisecondsSinceEpoch(entry.createdAt * 1000),
+      ),
+    ].join(' · ');
 
     return ListTile(
       onTap:    onTap,

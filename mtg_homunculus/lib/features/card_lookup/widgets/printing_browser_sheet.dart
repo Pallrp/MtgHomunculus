@@ -14,8 +14,8 @@ class PrintingBrowserSheet extends StatefulWidget {
   /// The printing returned by the scan pipeline (becomes the initial selection).
   final ScryfallCard initialCard;
 
-  /// The [ListingCard.id] to update — forwarded unchanged to [onUpdated].
-  final String listingCardId;
+  /// The `collection.db` entry id to update — forwarded unchanged to [onUpdated].
+  final int entryId;
 
   /// Whether this entry is currently marked foil.
   /// Defaults to false for auto-scanned cards.
@@ -23,11 +23,11 @@ class PrintingBrowserSheet extends StatefulWidget {
 
   /// Called when the user taps **Apply**.
   ///
-  /// Receives the (possibly unchanged) [listingCardId], the selected printing,
+  /// Receives the (possibly unchanged) [entryId], the selected printing,
   /// and the foil flag.  Null is valid for Quick Scan (no listing) — the sheet
   /// still dismisses without calling back.
   final void Function(
-    String listingCardId,
+    int entryId,
     ScryfallCard newPrinting,
     bool isFoil,
   )? onUpdated;
@@ -35,7 +35,7 @@ class PrintingBrowserSheet extends StatefulWidget {
   const PrintingBrowserSheet({
     super.key,
     required this.initialCard,
-    required this.listingCardId,
+    required this.entryId,
     this.initialIsFoil = false,
     this.onUpdated,
   });
@@ -48,9 +48,9 @@ class PrintingBrowserSheet extends StatefulWidget {
   static Future<void> show(
     BuildContext context, {
     required ScryfallCard card,
-    required String listingCardId,
+    required int entryId,
     bool isFoil = false,
-    void Function(String, ScryfallCard, bool)? onUpdated,
+    void Function(int, ScryfallCard, bool)? onUpdated,
   }) =>
       showModalBottomSheet<void>(
         context:            context,
@@ -61,7 +61,7 @@ class PrintingBrowserSheet extends StatefulWidget {
         ),
         builder: (_) => PrintingBrowserSheet(
           initialCard:   card,
-          listingCardId: listingCardId,
+          entryId: entryId,
           initialIsFoil: isFoil,
           onUpdated:     onUpdated,
         ),
@@ -110,7 +110,7 @@ class _PrintingBrowserSheetState extends State<PrintingBrowserSheet> {
   }
 
   void _confirm() {
-    widget.onUpdated?.call(widget.listingCardId, _selected, _isFoil);
+    widget.onUpdated?.call(widget.entryId, _selected, _isFoil);
     Navigator.pop(context);
   }
 

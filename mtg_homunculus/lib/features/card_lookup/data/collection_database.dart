@@ -149,6 +149,16 @@ class CollectionDatabase extends _$CollectionDatabase {
   CollectionDatabase() : super(_open());
   CollectionDatabase.forTesting(super.executor);
 
+  static CollectionDatabase? _instance;
+
+  /// The one instance the app uses.
+  ///
+  /// A singleton because drift propagates stream invalidation **within** an
+  /// instance, not across them: a second connection to the same file would let
+  /// the scanner add a card that the open sheet never hears about. Opening is
+  /// lazy, so this costs nothing until the card lookup is entered.
+  static CollectionDatabase get instance => _instance ??= CollectionDatabase();
+
   @override
   int get schemaVersion => 1;
 

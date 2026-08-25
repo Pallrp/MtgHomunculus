@@ -4,14 +4,18 @@ import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
-import '../models/card_listing.dart';
+import '../data/collection_database.dart';
 
-/// Exports a [CardListing] as an RFC 4180–compliant CSV file and shares it
-/// via the platform share sheet.
+/// Exports a list as an RFC 4180–compliant CSV file and shares it via the
+/// platform share sheet.
 ///
 /// Columns (in order):
-///   Name, Set Name, Set Code, Collector Number, Foil, Quantity,
-///   Price USD, Price EUR
+///   Name, Set Code, Collector Number, Finish, Language, Condition, Quantity
+///
+/// **Prices and set names are gone**, and deliberately. Both used to come from a
+/// live Scryfall response held in memory; the local store keeps neither — prices
+/// change daily and were dropped from the schema on purpose, and an entry's
+/// snapshot carries the set *code* because that is what identifies a printing.
 ///
 /// RFC 4180 rules applied:
 ///   - Lines separated by CRLF.
@@ -24,50 +28,54 @@ class CsvExporter {
 
   static const _headers = [
     'Name',
-    'Set Name',
     'Set Code',
     'Collector Number',
-    'Foil',
+    'Finish',
+    'Language',
+    'Condition',
     'Quantity',
-    'Price USD',
-    'Price EUR',
   ];
 
   // ---------------------------------------------------------------------------
   // Public API
   // ---------------------------------------------------------------------------
 
-  /// Build the CSV string for [listing].
-  static String buildCsv(CardListing listing) {
+  /// Build the CSV string for [entries].
+  ///
+  /// Reads the denormalised snapshot rather than joining against `cards.db`, so
+  /// an export still works with the card cache absent — which is the reason the
+  /// snapshot exists.
+  static String buildCsv(List<Entry> entries) {
     final rows = <String>[
       _row(_headers),
-      for (final card in listing.cards)
+      for (final e in entries)
         _row([
-          card.printing.name,
-          card.printing.setName,
-          card.printing.setCode.toUpperCase(),
-          card.printing.collectorNumber,
-          card.isFoil ? 'TRUE' : 'FALSE',
-          card.quantity.toString(),
-          card.printing.priceUsd?.toStringAsFixed(2) ?? '',
-          card.printing.priceEur?.toStringAsFixed(2) ?? '',
+          e.snapName,
+          e.snapSetCode.toUpperCase(),
+          e.snapCollector,
+          Finish.label(e.finish),
+          e.language,
+          Condition.label(e.condition),
+          e.quantity.toString(),
         ]),
     ];
     // RFC 4180 §2 — records separated by CRLF.
     return rows.join('\r\n');
   }
 
-  /// Write [listing] to a temp CSV file and open the platform share sheet.
-  static Future<void> share(CardListing listing) async {
-    final csv  = buildCsv(listing);
+  /// Write a list to a temp CSV file and open the platform share sheet.
+  static Future<void> share({
+    required String name,
+    required List<Entry> entries,
+  }) async {
+    final csv  = buildCsv(entries);
     final dir  = await getTemporaryDirectory();
-    final name = _safeName(listing.name);
-    final file = File('${dir.path}/$name.csv');
+    final file = File('${dir.path}/${_safeName(name)}.csv');
     await file.writeAsString(csv, encoding: utf8);
 
     await Share.shareXFiles(
       [XFile(file.path, mimeType: 'text/csv')],
-      subject: '${listing.name} — Card Listing',
+      subject: '$name — Card Listing',
     );
   }
 

@@ -28,14 +28,14 @@ class ScanPipeline {
   /// Identify each of [borders] in [frame], calling [onResult] as each resolves.
   ///
   /// [onCardAdded] may be null, in which case matches still surface but are not
-  /// persisted and [MatchedResult.listingCardId] is empty.
+  /// persisted and [MatchedResult.entryId] is zero.
   static Future<void> run({
     required CameraImage frame,
     required List<RotatedCardRect> borders,
     required CardIdentifier identifier,
     required CardsDatabase db,
     required void Function(int index, ScanResult result) onResult,
-    Future<String> Function(ScryfallCard card)? onCardAdded,
+    Future<int> Function(ScryfallCard card)? onCardAdded,
     Future<Card?> Function(List<Card> candidates)? onAmbiguous,
     DuplicateGuard? guard,
   }) async {
@@ -59,7 +59,7 @@ class ScanPipeline {
     required RotatedCardRect border,
     required CardIdentifier identifier,
     required CardsDatabase db,
-    required Future<String> Function(ScryfallCard)? onCardAdded,
+    required Future<int> Function(ScryfallCard)? onCardAdded,
     required Future<Card?> Function(List<Card>)? onAmbiguous,
     required DuplicateGuard? guard,
   }) async {
@@ -109,17 +109,17 @@ class ScanPipeline {
     // subsequent frame.
     guard?.remember(ScanFingerprint.of(id, best));
 
-    String listingCardId = '';
+    var entryId = 0;
     if (onCardAdded != null) {
       try {
-        listingCardId = await onCardAdded(card);
+        entryId = await onCardAdded(card);
       } catch (e, st) {
         AppLogger.w('ScanPipeline: onCardAdded failed for "${card.name}"',
             error: e, stackTrace: st);
-        return MatchedResult(border, card, '');
+        return MatchedResult(border, card, 0);
       }
     }
-    return MatchedResult(border, card, listingCardId);
+    return MatchedResult(border, card, entryId);
   }
 
   /// Adapt a local row to the model the UI already speaks.

@@ -1,11 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../../core/logging/app_logger.dart';
-import '../models/card_listing.dart';
-import '../models/listing_card.dart';
+import '../data/collection_database.dart';
 import '../models/scryfall_card.dart';
 import '../services/csv_exporter.dart';
-import '../services/listing_storage.dart';
 import '../widgets/printing_browser_sheet.dart';
 import '../widgets/scanner_overlay.dart' show ScannerOverlay, ScannerOverlayState, CaptureButton;
 
@@ -19,9 +19,9 @@ import '../widgets/scanner_overlay.dart' show ScannerOverlay, ScannerOverlayStat
 /// The camera stream is active only while the sheet handle is fully collapsed
 /// ([_minSheetSize]).  Dragging the sheet upward pauses the camera.
 class ListingDetailScreen extends StatefulWidget {
-  final String listingId;
+  final int listId;
 
-  const ListingDetailScreen({super.key, required this.listingId});
+  const ListingDetailScreen({super.key, required this.listId});
 
   @override
   State<ListingDetailScreen> createState() => _ListingDetailScreenState();
@@ -40,7 +40,9 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
   final _sheetController = DraggableScrollableController();
   final _scannerKey      = GlobalKey<ScannerOverlayState>();
 
-  CardListing? _listing;
+  CardList?    _list;
+  List<Entry>  _entries       = const [];
+  StreamSubscription<List<Entry>>? _entriesSub;
   bool         _loading       = true;
   bool         _cameraActive  = true;
   bool         _detecting     = false;   // drives capture-button green tint
@@ -60,6 +62,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
   void dispose() {
     _sheetController.removeListener(_onSheetChange);
     _sheetController.dispose();
+    _entriesSub?.cancel();
     super.dispose();
   }
 
@@ -92,9 +95,17 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
   // Storage
   // ---------------------------------------------------------------------------
 
+  CollectionDatabase get _db => CollectionDatabase.instance;
+
+  /// Entries arrive as a stream, so a card added by the scan loop shows up
+  /// without the screen having to know a scan happened.
   Future<void> _loadListing() async {
-    final listing = await ListingStorage.loadListing(widget.listingId);
-    if (mounted) setState(() { _listing = listing; _loading = false; });
+    final list = await _db.listById(widget.listId);
+    if (!mounted) return;
+    setState(() { _list = list; _loading = false; });
+    _entriesSub = _db.watchEntries(widget.listId).listen((rows) {
+      if (mounted) setState(() => _entries = rows);
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -103,98 +114,76 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
 
   /// Called by [ScanPipeline] when a card is matched.
   ///
-  /// Deduplicates by (scryfallId, isFoil=false): increments qty if already
-  /// present, creates a new [ListingCard] otherwise.
-  /// Returns the [ListingCard.id] of the created or incremented entry.
-  Future<String> _onCardAdded(ScryfallCard card) async {
-    final listing = _listing;
-    if (listing == null) return '';
-
-    final existingIdx = listing.cards.indexWhere(
-      (c) => c.printing.scryfallId == card.scryfallId && !c.isFoil,
+  /// The variant key does the deduplicating: a scan supplies no finish,
+  /// language or condition, so it lands on the app-wide defaults and any
+  /// further copy of that same variant increments rather than adding a row.
+  /// Returns the entry id of the created or incremented row.
+  Future<int> _onCardAdded(ScryfallCard card) async {
+    final id = await _db.addCard(
+      listId:          widget.listId,
+      cardId:          card.scryfallId,
+      name:            card.name,
+      setCode:         card.setCode,
+      collectorNumber: card.collectorNumber,
     );
-
-    final CardListing updated;
-    final String listingCardId;
-
-    if (existingIdx != -1) {
-      // Duplicate — increment quantity.
-      final existing = listing.cards[existingIdx];
-      listingCardId  = existing.id;
-      final cards    = [...listing.cards];
-      cards[existingIdx] = existing.copyWith(quantity: existing.quantity + 1);
-      updated = listing.copyWith(cards: cards);
-    } else {
-      // New entry.
-      final newCard  = ListingCard.create(printing: card);
-      listingCardId  = newCard.id;
-      updated = listing.copyWith(cards: [...listing.cards, newCard]);
-    }
-
-    await ListingStorage.saveListing(updated);
-    if (mounted) setState(() => _listing = updated);
-    AppLogger.d('ListingDetailScreen: added "${card.name}" → $listingCardId');
-    return listingCardId;
+    AppLogger.d('ListingDetailScreen: added "${card.name}" -> $id');
+    return id;
   }
 
   /// Called when the user picks a different printing or foil status from the
   /// printing browser sheet.  Fire-and-forget; errors are logged.
-  void _onCardUpdated(String listingCardId, ScryfallCard newPrinting, bool isFoil) {
-    _doCardUpdate(listingCardId, newPrinting, isFoil).catchError((Object e, StackTrace st) {
+  void _onCardUpdated(int entryId, ScryfallCard newPrinting, bool isFoil) {
+    _doCardUpdate(entryId, newPrinting, isFoil).catchError((Object e, StackTrace st) {
       AppLogger.e('ListingDetailScreen: update failed', error: e, stackTrace: st);
     });
   }
 
   Future<void> _doCardUpdate(
-    String listingCardId, ScryfallCard newPrinting, bool isFoil,
+    int entryId, ScryfallCard newPrinting, bool isFoil,
   ) async {
-    final listing = _listing;
-    if (listing == null) return;
-    final idx = listing.cards.indexWhere((c) => c.id == listingCardId);
-    if (idx == -1) return;
-    final cards = [...listing.cards];
-    cards[idx] = listing.cards[idx].copyWith(printing: newPrinting, isFoil: isFoil);
-    final updated = listing.copyWith(cards: cards);
-    await ListingStorage.saveListing(updated);
-    if (mounted) setState(() => _listing = updated);
+    await _db.updateEntry(
+      entryId,
+      cardId:          newPrinting.scryfallId,
+      name:            newPrinting.name,
+      setCode:         newPrinting.setCode,
+      collectorNumber: newPrinting.collectorNumber,
+      finish:          isFoil ? Finish.foil : Finish.nonfoil,
+    );
   }
 
   // ---------------------------------------------------------------------------
   // Listing mutations (called from sheet rows)
   // ---------------------------------------------------------------------------
 
-  Future<void> _deleteCard(String listingCardId) async {
-    final listing = _listing;
-    if (listing == null) return;
-    final updated = listing.copyWith(
-      cards: listing.cards.where((c) => c.id != listingCardId).toList(),
-    );
-    await ListingStorage.saveListing(updated);
-    if (mounted) setState(() => _listing = updated);
-  }
+  /// Adapt an entry to the model the printing browser speaks.
+  ///
+  /// Built from the snapshot rather than a `cards.db` lookup, so it holds only
+  /// what the row itself knows — enough to open the browser, which then fetches
+  /// the printings it lists.
+  ScryfallCard _asScryfallCard(Entry e) => ScryfallCard.fromLocal(
+        id:              e.cardId,
+        name:            e.snapName,
+        setCode:         e.snapSetCode,
+        setName:         e.snapSetCode.toUpperCase(),
+        collectorNumber: e.snapCollector,
+        finishes:        e.finish,
+      );
 
-  Future<void> _setQuantity(String listingCardId, int qty) async {
-    if (qty < 1) { await _deleteCard(listingCardId); return; }
-    final listing = _listing;
-    if (listing == null) return;
-    final idx = listing.cards.indexWhere((c) => c.id == listingCardId);
-    if (idx == -1) return;
-    final cards = [...listing.cards];
-    cards[idx] = listing.cards[idx].copyWith(quantity: qty);
-    final updated = listing.copyWith(cards: cards);
-    await ListingStorage.saveListing(updated);
-    if (mounted) setState(() => _listing = updated);
-  }
+  Future<void> _deleteCard(int entryId) => _db.removeEntry(entryId);
+
+  /// Zero deletes — see [CollectionDatabase.setQuantity].
+  Future<void> _setQuantity(int entryId, int qty) =>
+      _db.setQuantity(entryId, qty);
 
   // ---------------------------------------------------------------------------
   // Export
   // ---------------------------------------------------------------------------
 
   Future<void> _exportCsv() async {
-    final listing = _listing;
-    if (listing == null) return;
+    final list = _list;
+    if (list == null) return;
     try {
-      await CsvExporter.share(listing);
+      await CsvExporter.share(name: list.name, entries: _entries);
     } catch (e, st) {
       AppLogger.e('CSV export failed', error: e, stackTrace: st);
       if (mounted) {
@@ -214,7 +203,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
     if (_loading) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
-    if (_listing == null) {
+    if (_list == null) {
       return Scaffold(
         appBar: AppBar(title: const Text('Listing')),
         body: const Center(child: Text('Listing not found.')),
@@ -247,7 +236,8 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
             snap:             true,
             snapSizes:        const [_minSheetSize, _midSheetSize, _maxSheetSize],
             builder: (context, scrollController) => _ListingPanel(
-              listing:          _listing!,
+              listName:         _list!.name,
+              entries:          _entries,
               scrollController: scrollController,
               sheetController:  _sheetController,
               minSheetSize:     _minSheetSize,
@@ -255,16 +245,13 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
               detecting:        _detecting,
               onDeleteCard:     _deleteCard,
               onSetQuantity:    _setQuantity,
-              onCardTap: (id) {
-                final card = _listing!.cards.firstWhere((c) => c.id == id);
-                PrintingBrowserSheet.show(
-                  context,
-                  card:          card.printing,
-                  listingCardId: id,
-                  isFoil:        card.isFoil,
-                  onUpdated:     _onCardUpdated,
-                );
-              },
+              onCardTap: (entry) => PrintingBrowserSheet.show(
+                context,
+                card:      _asScryfallCard(entry),
+                entryId:   entry.id,
+                isFoil:    entry.finish == Finish.foil,
+                onUpdated: _onCardUpdated,
+              ),
               onCapture: () => _scannerKey.currentState?.capture(),
               onExportCsv: _exportCsv,
             ),
@@ -299,20 +286,26 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
 // ---------------------------------------------------------------------------
 
 class _ListingPanel extends StatelessWidget {
-  final CardListing                        listing;
+  final String                             listName;
+  final List<Entry>                        entries;
   final ScrollController                   scrollController;
   final DraggableScrollableController      sheetController;
   final double                             minSheetSize;
   final bool                               cameraActive;
   final bool                               detecting;
-  final Future<void> Function(String id)           onDeleteCard;
-  final Future<void> Function(String id, int qty)  onSetQuantity;
-  final void Function(String id)                   onCardTap;
-  final VoidCallback                               onCapture;
-  final VoidCallback                               onExportCsv;
+  final Future<void> Function(int id)           onDeleteCard;
+  final Future<void> Function(int id, int qty)  onSetQuantity;
+  final void Function(Entry entry)              onCardTap;
+  final VoidCallback                            onCapture;
+  final VoidCallback                            onExportCsv;
+
+  /// Total copies, which is not the row count as soon as anything is held in
+  /// multiples.
+  int get _copies => entries.fold(0, (n, e) => n + e.quantity);
 
   const _ListingPanel({
-    required this.listing,
+    required this.listName,
+    required this.entries,
     required this.scrollController,
     required this.sheetController,
     required this.minSheetSize,
@@ -388,13 +381,13 @@ class _ListingPanel extends StatelessWidget {
                       children: [
                         Expanded(
                           child: Text(
-                            listing.name,
+                            listName,
                             style:    Theme.of(context).textTheme.titleMedium,
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
                         Text(
-                          '${listing.cardCount} copy(s)',
+                          '$_copies copy(s)',
                           style: Theme.of(context).textTheme.bodySmall
                               ?.copyWith(color: cs.onSurfaceVariant),
                         ),
@@ -402,7 +395,7 @@ class _ListingPanel extends StatelessWidget {
                         IconButton(
                           icon:      const Icon(Icons.share_rounded),
                           tooltip:   'Export as CSV',
-                          onPressed: listing.cards.isNotEmpty ? onExportCsv : null,
+                          onPressed: entries.isNotEmpty ? onExportCsv : null,
                           constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
                           padding:   EdgeInsets.zero,
                         ),
@@ -414,7 +407,7 @@ class _ListingPanel extends StatelessWidget {
                 const SliverToBoxAdapter(child: Divider(height: 1)),
 
                 // Card list or empty-state placeholder.
-                if (listing.cards.isEmpty)
+                if (entries.isEmpty)
                   SliverFillRemaining(
                     child: Center(
                       child: Text(
@@ -429,15 +422,15 @@ class _ListingPanel extends StatelessWidget {
                     delegate: SliverChildBuilderDelegate(
                       (_, index) {
                         if (index.isOdd) return const Divider(height: 1);
-                        final card = listing.cards[index ~/ 2];
+                        final entry = entries[index ~/ 2];
                         return _ListingCardRow(
-                          card:     card,
-                          onTap:    () => onCardTap(card.id),
-                          onDelete: () => onDeleteCard(card.id),
-                          onSetQty: (qty) => onSetQuantity(card.id, qty),
+                          entry:    entry,
+                          onTap:    () => onCardTap(entry),
+                          onDelete: () => onDeleteCard(entry.id),
+                          onSetQty: (qty) => onSetQuantity(entry.id, qty),
                         );
                       },
-                      childCount: listing.cards.length * 2 - 1,
+                      childCount: entries.length * 2 - 1,
                     ),
                   ),
               ],
@@ -469,13 +462,13 @@ class _ListingPanel extends StatelessWidget {
 // ---------------------------------------------------------------------------
 
 class _ListingCardRow extends StatelessWidget {
-  final ListingCard card;
+  final Entry entry;
   final VoidCallback onTap;
   final VoidCallback onDelete;
   final void Function(int qty) onSetQty;
 
   const _ListingCardRow({
-    required this.card,
+    required this.entry,
     required this.onTap,
     required this.onDelete,
     required this.onSetQty,
@@ -483,7 +476,9 @@ class _ListingCardRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final p  = card.printing;
+    // Rendered from the entry's own snapshot, not a cards.db lookup: a list has
+    // to stay readable with the card cache wiped.
+    final imageUri = ScryfallCard.imageUrlFor(entry.cardId, null, size: 'small');
     final cs = Theme.of(context).colorScheme;
 
     return Row(
@@ -496,7 +491,7 @@ class _ListingCardRow extends StatelessWidget {
             behavior: HitTestBehavior.opaque,
             child: Center(
               child: Text(
-                '${card.quantity}×',
+                '${entry.quantity}×',
                 style: Theme.of(context).textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.w700,
                     ),
@@ -517,9 +512,9 @@ class _ListingCardRow extends StatelessWidget {
                   // Thumbnail.
                   ClipRRect(
                     borderRadius: BorderRadius.circular(4),
-                    child: p.imageUri != null
+                    child: imageUri != null
                         ? Image.network(
-                            p.imageUri!,
+                            imageUri,
                             width: 36, height: 50,
                             fit: BoxFit.cover,
                             errorBuilder: (_, _, _) => const _PlaceholderThumb(),
@@ -535,7 +530,7 @@ class _ListingCardRow extends StatelessWidget {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(
-                          p.name,
+                          entry.snapName,
                           overflow: TextOverflow.ellipsis,
                           style: Theme.of(context).textTheme.bodyMedium,
                         ),
@@ -544,14 +539,14 @@ class _ListingCardRow extends StatelessWidget {
                           children: [
                             Flexible(
                               child: Text(
-                                '${p.setCode.toUpperCase()} · ${p.collectorNumber}',
+                                '${entry.snapSetCode.toUpperCase()} · ${entry.snapCollector}',
                                 overflow: TextOverflow.ellipsis,
                                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                                       color: cs.onSurfaceVariant,
                                     ),
                               ),
                             ),
-                            if (card.isFoil) ...[
+                            if (entry.finish != Finish.nonfoil) ...[
                               const SizedBox(width: 6),
                               Container(
                                 padding: const EdgeInsets.symmetric(
@@ -594,8 +589,8 @@ class _ListingCardRow extends StatelessWidget {
     final result = await showDialog<int>(
       context: context,
       builder: (_) => _QtyDialog(
-        initial:  card.quantity,
-        cardName: card.printing.name,
+        initial:  entry.quantity,
+        cardName: entry.snapName,
       ),
     );
     if (result != null) onSetQty(result);

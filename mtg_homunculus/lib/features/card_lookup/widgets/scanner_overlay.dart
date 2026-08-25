@@ -58,13 +58,13 @@ class ScannerOverlay extends StatefulWidget {
   final bool isActive;
 
   /// Called when a matched card should be added to the listing.
-  /// Returns the listingCardId of the new or quantity-incremented [ListingCard].
-  final Future<String> Function(ScryfallCard card)? onCardAdded;
+  /// Returns the entry id of the new or quantity-incremented row.
+  final Future<int> Function(ScryfallCard card)? onCardAdded;
 
   /// Called when the user picks a different printing or foil status for an
   /// already-matched result (triggered from the printing browser sheet).
   final void Function(
-    String listingCardId,
+    int entryId,
     ScryfallCard newPrinting,
     bool isFoil,
   )? onCardUpdated;
@@ -688,13 +688,13 @@ class ScannerOverlayState extends State<ScannerOverlay> {
     if (DateTime.now().difference(at) > const Duration(seconds: 4)) return null;
 
     return switch (result) {
-      MatchedResult(:final card, :final listingCardId) => _MatchedChip(
+      MatchedResult(:final card, :final entryId) => _MatchedChip(
           card:  card,
           onTap: () => PrintingBrowserSheet.show(
             context,
-            card:          card,
-            listingCardId: listingCardId,
-            onUpdated:     widget.onCardUpdated,
+            card:      card,
+            entryId:   entryId,
+            onUpdated: widget.onCardUpdated,
           ),
         ),
       FailedResult(:final ocrText) => _FailedChip(
