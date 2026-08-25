@@ -78,3 +78,10 @@ lib/generated_plugin_registrant.dart
 
 # Claude
 .claude/*
+# Build-script cache: bulk data + ~2 GB of card images. Never committed.
+tool/.cache/
+
+# Build artifact, not source. Produced by tool/build_hash_index.dart from an
+# 11.5 GB image cache, distributed as a GitHub release asset, and fetched by
+# the app on first run. Committing it would add 4 MB to history per rebuild.
+assets/hash_index.bin
