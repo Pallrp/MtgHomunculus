@@ -12,12 +12,15 @@ import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../../../core/logging/app_logger.dart';
+import '../data/cards_database.dart';
+import '../data/hash_index.dart';
 import '../models/detector_params.dart';
 import '../models/rotated_card_rect.dart';
 import '../models/scan_result.dart';
 import '../models/scryfall_card.dart';
 import '../services/card_detector.dart';
 import '../services/card_warp.dart';
+import '../services/dhash.dart';
 import '../services/scan_pipeline.dart';
 import 'card_border_painter.dart';
 import 'manual_entry_dialog.dart';
@@ -128,6 +131,13 @@ class ScannerOverlayState extends State<ScannerOverlay> {
   DateTime       _ocrLastRun     = DateTime.fromMillisecondsSinceEpoch(0);
   int            _ocrDumpIx      = 0;
   TextRecognizer? _recognizer;
+
+  /// Loaded once, lazily. Null means matching is unavailable — the index has not
+  /// been downloaded yet — rather than failing.
+  HashIndex?      _index;
+  bool            _indexTried = false;
+  CardsDatabase?  _cardsDb;
+  List<HashCandidate> _hashHits = const [];
   DetectorParams _params      = const DetectorParams.defaults();
   Uint8List?     _liveEdgeMap;
 
@@ -207,6 +217,7 @@ class ScannerOverlayState extends State<ScannerOverlay> {
   @override
   void dispose() {
     _recognizer?.close();
+    _cardsDb?.close();
     _stopStream();
     _controller?.dispose();
     super.dispose();
@@ -301,6 +312,45 @@ class ScannerOverlayState extends State<ScannerOverlay> {
 
       card = CardWarp.fromCameraImage(frame, corners);
       if (card == null) return;
+
+      // ── dHash against the shipped index ──────────────────────────────────
+      // Calibration: the match threshold is a guess until a real capture has
+      // been measured against the real index. Everything supporting it so far
+      // degraded reference art synthetically.
+      if (!_indexTried) {
+        _indexTried = true;
+        _index = await HashIndex.load();
+        AppLogger.d('HASH-DBG index ${_index == null ? "absent" : "${_index!.count} cards"}');
+      }
+      if (_index != null) {
+        cv.Mat? gray;
+        try {
+          gray = cv.cvtColor(card, cv.COLOR_BGR2GRAY);
+          final hash = DHash.compute(gray.data, gray.cols, gray.rows);
+          final hits = _index!.nearest(hash);
+
+          _cardsDb ??= CardsDatabase();
+          final labelled = <HashCandidate>[];
+          for (final h in hits.take(3)) {
+            final c = await _cardsDb!.cardById(h.id);
+            labelled.add(HashCandidate(
+              c == null
+                  ? h.id
+                  : '${c.name} · ${c.setCode.toUpperCase()} ${c.collectorNumber}',
+              h.distance,
+            ));
+          }
+          _hashHits = labelled;
+          AppLogger.d('HASH-DBG ${hits.length} within ${HashIndex.provisionalThreshold}'
+              '${hits.isEmpty ? "" : "  best=${hits.first.distance}"}'
+              '${labelled.isEmpty ? "" : "  ${labelled.first.label}"}');
+        } catch (e, st) {
+          AppLogger.w('HASH-DBG failed', error: e, stackTrace: st);
+          _hashHits = const [];
+        } finally {
+          gray?.dispose();
+        }
+      }
 
       final band     = CardWarp.collectorBand(card);
       final cardPng  = CardWarp.encodePng(card);
@@ -492,11 +542,13 @@ class ScannerOverlayState extends State<ScannerOverlay> {
             child: SafeArea(
               top: false,
               child: OcrDebugPanel(
-                card:    _ocrCardPng,
-                band:    _ocrBandPng,
-                text:    _ocrText,
-                pxPerMm: _ocrPxPerMm,
-                busy:    _ocrBusy,
+                card:       _ocrCardPng,
+                band:       _ocrBandPng,
+                text:       _ocrText,
+                pxPerMm:    _ocrPxPerMm,
+                busy:       _ocrBusy,
+                hashes:     _hashHits,
+                indexCount: _index?.count,
               ),
             ),
           ),

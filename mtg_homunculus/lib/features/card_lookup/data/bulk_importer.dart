@@ -10,7 +10,19 @@ import '../../../core/logging/app_logger.dart';
 import 'cards_database.dart';
 
 /// Which stage of the setup the user is looking at.
-enum ImportStep { checking, downloading, inserting, indexing, done }
+enum ImportStep {
+  checking,
+  downloading,
+  inserting,
+  indexing,
+
+  /// Fetching `hash_index.bin`. Runs after the database is built, since it is
+  /// the only step the app is still usable without — matching falls through to
+  /// OCR until it lands.
+  hashIndex,
+
+  done,
+}
 
 /// Progress for the setup screen.
 ///

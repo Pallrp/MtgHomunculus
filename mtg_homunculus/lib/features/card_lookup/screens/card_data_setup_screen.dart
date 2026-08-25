@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../core/logging/app_logger.dart';
 import '../data/bulk_importer.dart';
 import '../data/cards_database.dart';
+import '../data/hash_index.dart';
 
 /// First-run card data setup.
 ///
@@ -52,12 +53,32 @@ class _CardDataSetupScreenState extends State<CardDataSetupScreen> {
     try {
       await for (final p in BulkImporter.run(widget.db)) {
         if (!mounted) return;
+        if (p.step == ImportStep.done) break;
         setState(() => _progress = p);
-        if (p.step == ImportStep.done) {
-          widget.onReady();
-          return;
-        }
       }
+      if (!mounted) return;
+
+      // The index is fetched rather than bundled: 4 MB on top of a download
+      // already happening, and it can then be updated without an app release.
+      setState(() => _progress = const ImportProgress(ImportStep.hashIndex));
+      final ok = await HashIndex.download(onProgress: (got, total) {
+        if (!mounted) return;
+        setState(() => _progress = ImportProgress(
+              ImportStep.hashIndex,
+              count: got,
+              fraction: total > 0 ? got / total : null,
+            ));
+      });
+      if (!ok) {
+        // Not fatal. Identification falls through to OCR until an index exists,
+        // and the card data screen offers a retry.
+        AppLogger.w('Setup: hash index download failed; continuing without it');
+      }
+
+      if (!mounted) return;
+      setState(() => _progress = const ImportProgress(ImportStep.done));
+      widget.onReady();
+      return;
     } catch (e, st) {
       AppLogger.w('Card data setup failed', error: e, stackTrace: st);
       if (mounted) setState(() => _error = e);
@@ -68,15 +89,16 @@ class _CardDataSetupScreenState extends State<CardDataSetupScreen> {
 
   /// Which step each row represents, in the order they run.
   ///
-  /// Image hashing is listed because it is part of the story, but it does not
-  /// block: the app is usable the moment the name index is built. The index
-  /// describes Scryfall as of its last rebuild, so there are almost always a few
-  /// hundred newer printings to hash, and those fall through to the OCR path
-  /// until they land.
+  /// All four block, because all four are cheap relative to the first. What does
+  /// **not** appear here is the on-device hashing of stragglers: the match index
+  /// describes Scryfall as of its last rebuild, so a few hundred newer printings
+  /// usually have no hash. Those are fetched in the background afterwards and
+  /// fall through to OCR until they land — the app is usable without them.
   static const _steps = [
     (ImportStep.downloading, 'Card data'),
     (ImportStep.inserting, 'Building database'),
     (ImportStep.indexing, 'Name index'),
+    (ImportStep.hashIndex, 'Match index'),
   ];
 
   @override
@@ -143,6 +165,7 @@ class _CardDataSetupScreenState extends State<CardDataSetupScreen> {
     return switch (step) {
       ImportStep.downloading => '${_mb(p.count)} MB',
       ImportStep.inserting => '${_thousands(p.count)} cards',
+      ImportStep.hashIndex => '${_mb(p.count)} MB',
       _ => null,
     };
   }

@@ -2,6 +2,18 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
+/// One candidate from a hash scan, resolved to something readable.
+class HashCandidate {
+  /// `Colossal Dreadmaw · XLN 180`, or the raw id if the card is not in the
+  /// database.
+  final String label;
+
+  /// Differing bits out of 157.
+  final int distance;
+
+  const HashCandidate(this.label, this.distance);
+}
+
 /// [dev-tool] Live OCR readout overlaid on the scanner.
 ///
 /// Toggled from the tuning panel. Shows what the identification pipeline
@@ -30,6 +42,16 @@ class OcrDebugPanel extends StatelessWidget {
   /// True while a pass is in flight.
   final bool busy;
 
+  /// Nearest cards to this capture's hash, nearest first.
+  ///
+  /// This is the calibration readout: the threshold in `HashIndex` is a guess
+  /// until a real camera capture has been measured against the real index.
+  /// Point the scanner at a card you can name and read the top distance.
+  final List<HashCandidate> hashes;
+
+  /// Null until the index has loaded — matching is unavailable, not failing.
+  final int? indexCount;
+
   const OcrDebugPanel({
     super.key,
     required this.card,
@@ -37,9 +59,63 @@ class OcrDebugPanel extends StatelessWidget {
     required this.text,
     required this.pxPerMm,
     required this.busy,
+    this.hashes = const [],
+    this.indexCount,
   });
 
   static const double _okPxPerMm = 6.0;
+
+  /// The whole point of this panel now: what the index says about this capture.
+  Widget _hashRow(TextStyle mono) {
+    if (indexCount == null) {
+      return Text('dHash  index not loaded',
+          style: mono.copyWith(color: Colors.white38));
+    }
+    if (hashes.isEmpty) {
+      return Text('dHash  no match  ($indexCount cards)',
+          style: mono.copyWith(color: Colors.orangeAccent));
+    }
+
+    final best = hashes.first;
+    // Green only when it is both close AND unambiguous — several candidates is
+    // the Choose Version path, not a clean identification.
+    final clean = best.distance <= 8 && hashes.length == 1;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text('dHash', style: mono.copyWith(
+              color: Colors.lightBlueAccent,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 1.2,
+            )),
+            const SizedBox(width: 8),
+            Text('${best.distance}/157',
+                style: mono.copyWith(
+                  color: clean ? Colors.greenAccent : Colors.orangeAccent,
+                  fontWeight: FontWeight.bold,
+                )),
+            const SizedBox(width: 8),
+            Text('${hashes.length} within threshold',
+                style: mono.copyWith(color: Colors.white38)),
+          ],
+        ),
+        for (final h in hashes.take(3))
+          Padding(
+            padding: const EdgeInsets.only(left: 2, top: 2),
+            child: Text(
+              '${h.distance.toString().padLeft(3)}  ${h.label}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: mono.copyWith(
+                color: h == best ? Colors.white : Colors.white54,
+              ),
+            ),
+          ),
+      ],
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -92,6 +168,9 @@ class OcrDebugPanel extends StatelessWidget {
                   ),
               ],
             ),
+            const SizedBox(height: 8),
+
+            _hashRow(mono),
             const SizedBox(height: 8),
 
             Row(

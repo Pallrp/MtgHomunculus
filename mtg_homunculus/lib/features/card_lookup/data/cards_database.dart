@@ -175,6 +175,22 @@ class CardsDatabase extends _$CardsDatabase {
         MetaData(key: key, value: value),
       );
 
+  /// A single printing by Scryfall id — what a hash match resolves to.
+  Future<Card?> cardById(String id) =>
+      (select(cards)..where((c) => c.id.equals(id))).getSingleOrNull();
+
+  /// Cards that still need a hash computed on device.
+  ///
+  /// The `image_status` filter is **not optional**: 738 of 107,323 printings have
+  /// `missing` or `placeholder` art and can never be hashed. Without it they sit
+  /// in the queue forever, retried on every launch, downloading nothing.
+  Future<List<Card>> unhashed(Set<String> indexed, {int limit = 500}) async {
+    final rows = await (select(cards)
+          ..where((c) => c.imageStatus.isBiggerOrEqualValue(2)))
+        .get();
+    return rows.where((c) => !indexed.contains(c.id)).take(limit).toList();
+  }
+
   // ── name index ────────────────────────────────────────────────────────────
 
   /// Rebuild `card_names_fts` from the distinct names in [Cards].
