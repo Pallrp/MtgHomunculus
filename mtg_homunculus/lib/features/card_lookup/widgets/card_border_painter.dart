@@ -53,6 +53,20 @@ class CardBorderPainter extends CustomPainter {
   /// Calibration detail, not user guidance.
   final bool showQualityDetail;
 
+  /// Overrides the quality colour while the scan loop has something to say —
+  /// yellow identifying, green matched, red failed.
+  ///
+  /// An override rather than another [CardQuality] case because the two describe
+  /// different things and only overlap by accident: quality says whether a
+  /// border *can* be read, the loop says what happened when it was. They also
+  /// collide on green, and the loop has to win — a quad that is merely
+  /// well-framed must not look like a card that was just added.
+  ///
+  /// The quality caption is suppressed while this is set. "Move closer" under a
+  /// border that is already being identified is instruction for a decision the
+  /// scanner has passed.
+  final Color? stateColour;
+
   const CardBorderPainter({
     required this.rects,
     required this.imageSize,
@@ -62,6 +76,7 @@ class CardBorderPainter extends CustomPainter {
     this.cropOffset        = Offset.zero,
     this.showQualityLabel  = true,
     this.showQualityDetail = false,
+    this.stateColour,
   });
 
   /// Green: ready. Amber: fixable by moving. Red: not a whole card.
@@ -101,6 +116,7 @@ class CardBorderPainter extends CustomPainter {
       // Draw quadrilateral from the 4 corners, coloured by how usable it is.
       if (displayCorners.length == 4) {
         final quality = rotated.quality;
+        final colour  = stateColour ?? _colourFor(quality);
         final path = ui.Path();
         path.moveTo(displayCorners[0].dx, displayCorners[0].dy);
         path.lineTo(displayCorners[1].dx, displayCorners[1].dy);
@@ -110,11 +126,13 @@ class CardBorderPainter extends CustomPainter {
         canvas.drawPath(
           path,
           Paint()
-            ..color       = _colourFor(quality).withValues(alpha: 0.9)
+            ..color       = colour.withValues(alpha: 0.9)
             ..style       = PaintingStyle.stroke
-            ..strokeWidth = 3,
+            ..strokeWidth = stateColour == null ? 3 : 4,
         );
-        if (showQualityLabel && quality != CardQuality.good) {
+        if (stateColour == null &&
+            showQualityLabel &&
+            quality != CardQuality.good) {
           _drawLabel(canvas, displayCorners, rotated, quality);
         }
       }
@@ -161,7 +179,8 @@ class CardBorderPainter extends CustomPainter {
       old.nameStripFraction  != nameStripFraction ||
       old.cropOffset         != cropOffset        ||
       old.showQualityLabel   != showQualityLabel   ||
-      old.showQualityDetail  != showQualityDetail;
+      old.showQualityDetail  != showQualityDetail  ||
+      old.stateColour        != stateColour;
 
   /// Caption above the border saying what to do about it.
   void _drawLabel(

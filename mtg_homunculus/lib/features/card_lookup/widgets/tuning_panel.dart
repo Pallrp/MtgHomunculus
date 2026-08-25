@@ -26,10 +26,14 @@ class TuningPanel extends StatefulWidget {
   /// Whether the scanner acts on one detection per capture rather than all.
   final bool           singleRect;
 
+  /// Whether identification fires on its own when a good border is held.
+  final bool           loopEnabled;
+
   final void Function(DetectorParams) onParamsChanged;
   final void Function(bool)           onEdgeMapToggled;
   final void Function(bool)           onOcrDebugToggled;
   final void Function(bool)           onSingleRectToggled;
+  final void Function(bool)           onLoopToggled;
 
   /// [dev-tool] Fetch `hash_index.bin` from the release. The proper home for this
   /// is the card data screen (see local_data_store.md); this is the stopgap that
@@ -51,10 +55,12 @@ class TuningPanel extends StatefulWidget {
     required this.showEdgeMap,
     required this.showOcrDebug,
     required this.singleRect,
+    required this.loopEnabled,
     required this.onParamsChanged,
     required this.onEdgeMapToggled,
     required this.onOcrDebugToggled,
     required this.onSingleRectToggled,
+    required this.onLoopToggled,
     required this.onDownloadIndex,
     required this.onResetCardData,
     required this.dataStatus,
@@ -100,6 +106,7 @@ class _TuningPanelState extends State<TuningPanel> {
                   _buildEdgeToggle(context),
                   _buildOcrToggle(context),
                   _buildSingleRectToggle(context),
+                  _buildLoopToggle(context),
                   _buildDataActions(context),
                   const SizedBox(height: 8),
                   _buildResetRow(context),
@@ -387,6 +394,22 @@ class _TuningPanelState extends State<TuningPanel> {
     ),
     value:    !widget.singleRect,
     onChanged: (v) => widget.onSingleRectToggled(!v),
+  );
+
+  /// The scan loop's kill switch.
+  ///
+  /// On is the designed behaviour. Off returns the scanner to button-only
+  /// capture, which is the fallback if continuous identification turns out to
+  /// cost too much battery or heat on a long session — a thing to measure on
+  /// device rather than guess at.
+  Widget _buildLoopToggle(BuildContext context) => SwitchListTile(
+    contentPadding: EdgeInsets.zero,
+    title: const Text('Auto-identify'),
+    subtitle: const Text(
+      'Scan continuously while a green border is held, instead of on the button',
+    ),
+    value:    widget.loopEnabled,
+    onChanged: widget.onLoopToggled,
   );
 
   Widget _buildOcrToggle(BuildContext context) => SwitchListTile(

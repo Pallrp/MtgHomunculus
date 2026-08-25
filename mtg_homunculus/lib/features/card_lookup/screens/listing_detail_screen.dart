@@ -73,6 +73,21 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
     if (active != _cameraActive) setState(() => _cameraActive = active);
   }
 
+  /// Nothing detected for 30 seconds — open the sheet.
+  ///
+  /// Expanding stops the camera through [_onSheetChange], so this needs no
+  /// separate blackout state: one gesture, one state, and reviewing what you
+  /// collected is the likely next thing anyway.
+  void _onScannerIdle() {
+    if (!_sheetController.isAttached) return;
+    if (_sheetController.size > _activeThreshold) return; // already open
+    _sheetController.animateTo(
+      _maxSheetSize,
+      duration: const Duration(milliseconds: 280),
+      curve:    Curves.easeOut,
+    );
+  }
+
   // ---------------------------------------------------------------------------
   // Storage
   // ---------------------------------------------------------------------------
@@ -219,6 +234,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
               onCardAdded:        _onCardAdded,
               onCardUpdated:      _onCardUpdated,
               onDetectionChanged: (d) => setState(() => _detecting     = d),
+              onIdle:             _onScannerIdle,
             ),
           ),
 

@@ -22,6 +22,7 @@ import '../services/card_detector.dart';
 import '../services/card_identifier.dart';
 import '../services/card_warp.dart';
 import '../services/dhash.dart';
+import '../services/duplicate_guard.dart';
 import '../services/scan_pipeline.dart';
 import 'card_border_painter.dart';
 import 'choose_version_sheet.dart';
@@ -82,6 +83,14 @@ class ScannerOverlay extends StatefulWidget {
   /// detected.
   final void Function(bool detecting)? onDetectionChanged;
 
+  /// Called once when nothing has been detected for 30 seconds.
+  ///
+  /// The overlay reports the condition and does nothing about it: the designed
+  /// response is to expand the listing sheet, which the parent owns and which
+  /// stops the camera as a side effect — one gesture, one state, and reviewing
+  /// what you collected is the likely next thing anyway.
+  final VoidCallback? onIdle;
+
   /// When true, a tuning-panel toggle button is rendered inside the overlay
   /// and the full [TuningPanel] is accessible.  Intended for [QuickScanScreen]
   /// only; leave false (the default) for [ListingDetailScreen].
@@ -95,6 +104,7 @@ class ScannerOverlay extends StatefulWidget {
     this.showCaptureButton   = true,
     this.showTuningButton    = false,
     this.onDetectionChanged,
+    this.onIdle,
   });
 
   @override
@@ -137,6 +147,43 @@ class ScannerOverlayState extends State<ScannerOverlay> {
   bool       _capturing   = false;  // pipeline in flight
   ScanResult? _lastResult;          // most recent outcome, shown briefly
   DateTime?   _lastResultAt;
+
+  /// Identify without waiting for a button press.
+  ///
+  /// The designed behaviour (`single_card_capture_flow.md`): point, and cards
+  /// appear. The button stays as an override for a border the gate refuses.
+  bool _loopEnabled = true;
+
+  /// Stops one card being added on every frame it stays in view.
+  final _guard = DuplicateGuard();
+
+  /// Outcome colour for the border, and when it expires.
+  ///
+  /// Separate from [_lastResult], which drives the result chip and lives for
+  /// seconds. This is a flash measured in hundreds of milliseconds, because at
+  /// two scans a second a four-second border colour would still be showing the
+  /// previous card's outcome when the next one resolves.
+  Color?    _flashColour;
+  DateTime? _flashUntil;
+
+  /// When a card was last on screen, for the idle timeout.
+  DateTime _lastDetectionAt = DateTime.now();
+  bool     _idleFired       = false;
+
+  /// After this long with nothing detected, the user has stopped scanning.
+  static const _idleAfter = Duration(seconds: 30);
+
+  /// How long an outcome colours the border.
+  static const _flashFor = Duration(milliseconds: 600);
+
+  /// What the border should say about the scan loop, or null to leave it to
+  /// [CardQuality].
+  ///
+  /// The outcome flash outranks "identifying": a scan that has just finished has
+  /// something to report, and the next one starting must not overwrite it before
+  /// the user sees it.
+  Color? get _borderState =>
+      _flashColour ?? (_capturing ? Colors.yellowAccent : null);
 
   // ── Tuning / debug ────────────────────────────────────────────────────────
   bool           _tuningOpen  = false;
@@ -255,7 +302,12 @@ class ScannerOverlayState extends State<ScannerOverlay> {
   ///
   /// No-op if the camera is not ready, already capturing, no frame has
   /// been received yet, or a previous identification is still running.
-  void capture() => _capture();
+  /// Force a capture, ignoring the quality gate the loop applies.
+  ///
+  /// The user pressing the button is them overruling the gate — an amber border
+  /// still reads correctly 43% of the time, and refusing to try would make the
+  /// button feel broken on exactly the frames someone reaches for it.
+  void capture() => _capture(manual: true);
 
   // ---------------------------------------------------------------------------
   // Stream management
@@ -291,6 +343,12 @@ class ScannerOverlayState extends State<ScannerOverlay> {
         if (rects.isNotEmpty != wasDetecting) {
           widget.onDetectionChanged?.call(rects.isNotEmpty);
         }
+        if (rects.isNotEmpty) {
+          _lastDetectionAt = DateTime.now();
+          _idleFired = false;
+        }
+        _maybeAutoCapture();
+        _checkIdle();
       }
 
       if (_showOcrDebug && mounted) {
@@ -488,6 +546,12 @@ class ScannerOverlayState extends State<ScannerOverlay> {
   }
 
   void _stopStream() {
+    // Stopping is the user leaving the camera — opening the sheet, backing out.
+    // Coming back is a new scan, so the card they last added must be addable
+    // again; otherwise a second copy of it disappears with no feedback at all.
+    _guard.reset();
+    _idleFired = false;
+    _lastDetectionAt = DateTime.now();
     if (_controller?.value.isStreamingImages != true) return;
     try { _controller!.stopImageStream(); } catch (_) {}
   }
@@ -498,7 +562,58 @@ class ScannerOverlayState extends State<ScannerOverlay> {
   // Capture
   // ---------------------------------------------------------------------------
 
-  Future<void> _capture() async {
+  /// Identify automatically when a usable border is on screen.
+  ///
+  /// **Gated on [CardQuality.good], which the manual button deliberately is
+  /// not.** The gate would be wrong for a button — the user pressed it, so
+  /// attempt something — but it is right for a loop, where skipping a frame
+  /// costs 300ms and the next one is already coming. The measurements say the
+  /// same: 0 of 13 frames above the skew threshold ever produced a correct
+  /// collector read, and below 6 px/mm the rate falls from 83% to 43%. Burning
+  /// a full identify on those blocks the frame that would have worked.
+  ///
+  /// No stability gate — see "Rate Limiting Falls Out For Free" in
+  /// `single_card_capture_flow.md`. Requiring N consecutive matching detections
+  /// adds latency to every scan to solve what pipeline latency already solves.
+  void _maybeAutoCapture() {
+    if (!_loopEnabled || _capturing || !widget.isActive) return;
+    final rects = _shownRects;
+    if (rects.isEmpty || rects.first.quality != CardQuality.good) return;
+    unawaited(_capture());
+  }
+
+  /// Tell the parent the user has stopped scanning.
+  ///
+  /// Fires once per idle stretch, and rearms only when a card is seen again —
+  /// otherwise a phone face-down on the table would fire this twice a second.
+  /// What to *do* about it belongs to the parent: the overlay does not own the
+  /// sheet, and expanding it is what stops the camera.
+  void _checkIdle() {
+    if (_idleFired || _capturing || !widget.isActive) return;
+    if (DateTime.now().difference(_lastDetectionAt) < _idleAfter) return;
+    _idleFired = true;
+    AppLogger.d('Scanner: idle for ${_idleAfter.inSeconds}s');
+    widget.onIdle?.call();
+  }
+
+  /// Colour the border for [_flashFor], then let it return to quality colours.
+  void _flash(Color colour) {
+    final until = DateTime.now().add(_flashFor);
+    setState(() {
+      _flashColour = colour;
+      _flashUntil  = until;
+    });
+    Future.delayed(_flashFor, () {
+      // Another scan may have flashed in the meantime; only clear our own.
+      if (!mounted || _flashUntil != until) return;
+      setState(() {
+        _flashColour = null;
+        _flashUntil  = null;
+      });
+    });
+  }
+
+  Future<void> _capture({bool manual = false}) async {
     if (!_cameraReady || _capturing || _lastFrame == null) return;
     final frame = _lastFrame!;
     final rects = _shownRects;
@@ -510,11 +625,13 @@ class ScannerOverlayState extends State<ScannerOverlay> {
     AppLogger.d('Capture: ${_liveRects.length} detected, '
         'identifying ${rects.length}'
         '${_singleRect ? " (single)" : " (all)"}'
+        '${manual ? " [button]" : " [auto]"}'
         '  quality=${rects.map((r) => r.quality.name).join(",")}');
 
-    // The preview keeps running. There is no inspection step to freeze for:
-    // the stream frame is the capture (spike S3), so stopping it would only
-    // cost the next detection and buy nothing.
+    // The preview keeps running and the border stays drawn — it turns yellow
+    // instead. There is no inspection step to freeze for: the stream frame is
+    // the capture (spike S3), so stopping it would only cost the next detection
+    // and buy nothing.
     setState(() => _capturing = true);
 
     try {
@@ -538,8 +655,16 @@ class ScannerOverlayState extends State<ScannerOverlay> {
           return ChooseVersionSheet.show(context,
               candidates: candidates, db: db);
         },
+        guard: _guard,
         onResult: (i, result) {
           if (!mounted) return;
+          // A duplicate is the loop working, not an outcome: it must not flash,
+          // and it must not replace the chip for the card actually added.
+          if (result is DuplicateResult) {
+            AppLogger.d('Capture: duplicate — ${result.card.name}');
+            return;
+          }
+          _flash(result is MatchedResult ? Colors.greenAccent : Colors.redAccent);
           setState(() {
             _lastResult   = result;
             _lastResultAt = DateTime.now();
@@ -580,6 +705,9 @@ class ScannerOverlayState extends State<ScannerOverlay> {
             onCardAdded: widget.onCardAdded,
           ),
         ),
+      // Never reaches here — filtered in onResult, since a duplicate is the
+      // loop working rather than an outcome to report.
+      DuplicateResult() => null,
     };
   }
 
@@ -661,12 +789,20 @@ class ScannerOverlayState extends State<ScannerOverlay> {
               showEdgeMap:  _showEdgeMap,
               showOcrDebug: _showOcrDebug,
               singleRect:   _singleRect,
+              loopEnabled:  _loopEnabled,
               onParamsChanged: (p) async {
                 setState(() => _params = p);
                 await DetectorParams.setCurrent(p);
               },
               onEdgeMapToggled: (v) => setState(() => _showEdgeMap = v),
               onSingleRectToggled: (v) => setState(() => _singleRect = v),
+              onLoopToggled: (v) => setState(() {
+                _loopEnabled = v;
+                // Turning the loop off mid-session must not leave the last card
+                // remembered — the button is then the only way to scan, and it
+                // would refuse the card still in frame.
+                if (!v) _guard.reset();
+              }),
               onDownloadIndex:   _downloadIndex,
               onResetCardData:   _resetCardData,
               dataStatus:        _dataStatus,
@@ -776,7 +912,11 @@ class ScannerOverlayState extends State<ScannerOverlay> {
             ),
 
             // Border overlay — same scaling and positioning as media layer.
-            if (_frameSize != null && !_capturing)
+            //
+            // Drawn *through* identification, not hidden by it. The loop fires
+            // two to three times a second, so anything that disappears while a
+            // scan is in flight spends most of its life invisible.
+            if (_frameSize != null)
               Positioned(
                 left:   offsetX,
                 top:    offsetY,
@@ -791,19 +931,17 @@ class ScannerOverlayState extends State<ScannerOverlay> {
                     cropOffset:        ui.Offset.zero,  // ← Positioned layout handles all positioning
                     // [dev-tool] Append the measured value while calibrating.
                     showQualityDetail: _tuningOpen || _showOcrDebug,
+                    stateColour:       _borderState,
                   ),
                 ),
               ),
 
-            // Loading overlay while stopping stream / taking picture.
-            if (_capturing)
-              const ColoredBox(
-                color: Color(0x66000000),
-                child: Center(child: CircularProgressIndicator(color: Colors.white)),
-              ),
+            // No blocking overlay. The scan loop runs continuously, so a
+            // full-screen spinner would strobe; the border colour carries the
+            // same information without covering the thing being scanned.
 
             // Capture button — only when the parent has not taken ownership.
-            if (!_capturing && widget.showCaptureButton)
+            if (widget.showCaptureButton)
               Positioned(
                 left: 0, right: 0, bottom: 24,
                 child: Center(

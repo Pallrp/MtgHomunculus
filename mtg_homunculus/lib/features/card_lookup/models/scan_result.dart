@@ -27,6 +27,20 @@ final class MatchedResult extends ScanResult {
   const MatchedResult(super.border, this.card, this.listingCardId);
 }
 
+/// The card was identified, and is the same one that was just added.
+///
+/// Not a failure and not shown to the user: the scan loop runs two to three
+/// times a second, so a card held still in frame resolves correctly on every
+/// frame. This exists as a distinct outcome rather than a silent `return` so the
+/// loop can log how often it fires — a rate that suddenly drops means duplicate
+/// rejection has stopped working, and a listing full of quantity-14 rows is a
+/// slow way to find that out.
+final class DuplicateResult extends ScanResult {
+  final ScryfallCard card;
+
+  const DuplicateResult(super.border, this.card);
+}
+
 /// The pipeline could not match the card (OCR found nothing or Scryfall
 /// returned 404).  The card is **not** added to the listing.
 ///

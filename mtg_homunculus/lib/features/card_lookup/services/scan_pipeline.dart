@@ -6,6 +6,7 @@ import '../models/rotated_card_rect.dart';
 import '../models/scan_result.dart';
 import '../models/scryfall_card.dart';
 import 'card_identifier.dart';
+import 'duplicate_guard.dart';
 
 /// Orchestrates identification for each detected card border.
 ///
@@ -36,6 +37,7 @@ class ScanPipeline {
     required void Function(int index, ScanResult result) onResult,
     Future<String> Function(ScryfallCard card)? onCardAdded,
     Future<Card?> Function(List<Card> candidates)? onAmbiguous,
+    DuplicateGuard? guard,
   }) async {
     for (var i = 0; i < borders.length; i++) {
       onResult(i, await _processOne(
@@ -45,6 +47,7 @@ class ScanPipeline {
         db: db,
         onCardAdded: onCardAdded,
         onAmbiguous: onAmbiguous,
+        guard: guard,
       ));
     }
   }
@@ -58,6 +61,7 @@ class ScanPipeline {
     required CardsDatabase db,
     required Future<String> Function(ScryfallCard)? onCardAdded,
     required Future<Card?> Function(List<Card>)? onAmbiguous,
+    required DuplicateGuard? guard,
   }) async {
     final id = await identifier.identify(frame, border);
 
@@ -69,6 +73,16 @@ class ScanPipeline {
     var best = id.best;
     if (best == null) return FailedResult(border, id.ocrText);
 
+    // Duplicate check first, and specifically *before* the prompt below.
+    //
+    // The loop re-identifies the same card two to three times a second. If this
+    // ran after the prompt, an ambiguous card left in frame would re-open Choose
+    // Version every few hundred milliseconds — the user would answer it and be
+    // asked again immediately, which is worse than any wrong match.
+    if (guard != null && guard.isDuplicate(ScanFingerprint.of(id, best))) {
+      return DuplicateResult(border, await toScryfallCard(db, best));
+    }
+
     // Ambiguity is structural, not a failure: reprints hash identically, and a
     // name alone cannot determine a printing. Ask rather than guess — a silently
     // wrong printing is hard to notice and costs more to correct the longer a
@@ -78,13 +92,22 @@ class ScanPipeline {
           '${id.candidates.map((c) => "${c.name} ${c.setCode}/${c.collectorNumber}").join(", ")}');
       if (onAmbiguous != null) {
         final picked = await onAmbiguous(id.candidates);
-        // Skipped: nothing is added, and there is no half-added row to clean up.
-        if (picked == null) return FailedResult(border, id.ocrText);
+        if (picked == null) {
+          // Skipped. Remembered anyway, or the card still in frame re-prompts on
+          // the next frame and "skip" becomes unusable.
+          guard?.remember(ScanFingerprint.of(id, best));
+          return FailedResult(border, id.ocrText);
+        }
         best = picked;
       }
     }
 
     final card = await toScryfallCard(db, best);
+
+    // Remembered on the way to being added, not after: `onCardAdded` can throw,
+    // and a card that failed to persist must not then be treated as new on every
+    // subsequent frame.
+    guard?.remember(ScanFingerprint.of(id, best));
 
     String listingCardId = '';
     if (onCardAdded != null) {

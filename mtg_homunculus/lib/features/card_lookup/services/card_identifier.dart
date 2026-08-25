@@ -43,11 +43,24 @@ class Identification {
   /// Raw OCR, kept for Manual Add to prefill and for diagnosis.
   final String ocrText;
 
+  /// The collector number **as read off the card**, not as stored on the matched
+  /// row. Null when the band did not parse.
+  ///
+  /// The distinction is the whole point for duplicate rejection: every matched
+  /// row has a collector number, so taking it from the database would make the
+  /// strongest signal always available and rank it against itself.
+  final String? readCollectorNumber;
+
+  /// The set code as read off the card. Null when nothing set-shaped parsed.
+  final String? readSetCode;
+
   const Identification({
     required this.candidates,
     required this.via,
     this.hashDistance,
     this.ocrText = '',
+    this.readCollectorNumber,
+    this.readSetCode,
   });
 
   static const empty =
@@ -143,6 +156,8 @@ class CardIdentifier {
               : IdentifiedVia.hash,
           hashDistance: hashHits.first.distance,
           ocrText: ocr.raw,
+          readCollectorNumber: ocr.collectorNumber,
+          readSetCode: ocr.setCode,
         );
       }
     }
@@ -155,6 +170,8 @@ class CardIdentifier {
           candidates: byName,
           via: IdentifiedVia.ocr,
           ocrText: ocr.raw,
+          readCollectorNumber: ocr.collectorNumber,
+          readSetCode: ocr.setCode,
         );
       }
     }
@@ -163,6 +180,8 @@ class CardIdentifier {
       candidates: const [],
       via: IdentifiedVia.none,
       ocrText: ocr.raw,
+      readCollectorNumber: ocr.collectorNumber,
+      readSetCode: ocr.setCode,
     );
   }
 
