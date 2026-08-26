@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../data/collection_database.dart';
 import '../models/scan_defaults.dart';
+import '../theme/picker_tokens.dart';
 
 /// How a chip earns colour.
 enum ChipEmphasis {
@@ -112,55 +113,64 @@ class _Chip extends StatelessWidget {
     this.severity = Condition.nearMint,
   });
 
-  /// The condition ramp, warming with damage.
-  ///
-  /// Fixed values rather than theme colours: these mean the same thing in both
-  /// themes, and a scheme colour would make `DMG` read as an error state.
-  static const _ramp = {
-    Condition.lightlyPlayed: Color(0xFFC8B560),
-    Condition.moderatelyPlayed: Color(0xFFC89550),
-    Condition.heavilyPlayed: Color(0xFFC06A40),
-    Condition.damaged: Color(0xFFB04A40),
-  };
-
-  /// Static, deliberately. A shimmer on every row would be unbearable at ten
-  /// rows a screen.
-  static const _foil = LinearGradient(
-    colors: [Color(0xFF8FD6FF), Color(0xFFC9A7FF), Color(0xFFFFC2E2)],
-    begin: Alignment.topLeft,
-    end: Alignment.bottomRight,
-  );
-
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
+    final t = PickerTokens.of(context);
 
-    final (Color fg, Color bg, Gradient? gradient) = switch (emphasis) {
-      ChipEmphasis.muted => (cs.onSurfaceVariant, cs.surfaceContainerHighest, null),
-      ChipEmphasis.notable => (cs.onPrimaryContainer, cs.primaryContainer, null),
-      ChipEmphasis.iridescent => (const Color(0xFF221833), Colors.transparent, _foil),
+    // The condition ramp, warming with damage.
+    //
+    // The artifact names one warn colour, for MP. The other three steps are
+    // interpolated from it rather than invented, so the ramp stays inside the
+    // palette while still giving four distinguishable states — a ramp whose
+    // middle steps look identical is not a ramp.
+    //
+    // Only DMG reaches vermilion, and only in the text. Vermilion is
+    // destructive-only in this design, and a played card is not an error.
+    final ramp = <int, (Color fg, Color bg)>{
+      Condition.lightlyPlayed: (
+        t.textDim,
+        Color.lerp(t.surface2, t.warnBg, 0.45)!,
+      ),
+      Condition.moderatelyPlayed: (t.warn, t.warnBg),
+      Condition.heavilyPlayed: (
+        t.warn,
+        Color.lerp(t.warnBg, t.vermilion, 0.18)!,
+      ),
+      Condition.damaged: (
+        t.vermilion,
+        Color.lerp(t.warnBg, t.vermilion, 0.36)!,
+      ),
+    };
+
+    final (Color fg, Color bg, Color border, Gradient? gradient) =
+        switch (emphasis) {
+      ChipEmphasis.muted => (t.textFaint, t.surface2, t.line, null),
+      ChipEmphasis.notable => (t.accent, t.accentSoft, t.accent, null),
+      ChipEmphasis.iridescent => (
+          PickerTokens.onFoil,
+          Colors.transparent,
+          Colors.black.withValues(alpha: 0.2),
+          PickerTokens.foil,
+        ),
       ChipEmphasis.warm => (
-          const Color(0xFF201510),
-          _ramp[severity] ?? cs.surfaceContainerHighest,
+          ramp[severity]?.$1 ?? t.textFaint,
+          ramp[severity]?.$2 ?? t.surface2,
+          ramp[severity]?.$1 ?? t.line,
           null,
         ),
     };
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
       decoration: BoxDecoration(
         color: gradient == null ? bg : null,
         gradient: gradient,
-        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: border, width: 1),
+        borderRadius: BorderRadius.circular(PickerTokens.radiusChip),
       ),
       child: Text(
         label,
-        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: fg,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 0.3,
-              height: 1.1,
-            ),
+        style: PickerTokens.mono(context, size: 10, color: fg),
       ),
     );
   }

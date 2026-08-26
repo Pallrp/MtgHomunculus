@@ -5,6 +5,7 @@ import 'package:flutter/material.dart' hide Card;
 
 import '../data/cards_database.dart';
 import '../models/scryfall_card.dart';
+import '../theme/picker_tokens.dart';
 
 /// Which question the grid is being opened to answer.
 ///
@@ -223,40 +224,50 @@ class _CardPickerState extends State<CardPicker> {
   }
 
   Widget _header(BuildContext context) {
-    final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
+    final t = PickerTokens.of(context);
+    return Container(
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: t.line)),
+      ),
+      padding: const EdgeInsets.fromLTRB(14, 12, 8, 10),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(_title, style: theme.textTheme.titleMedium),
                 Text(
-                  _subtitle,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
+                  _title,
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: t.text,
                   ),
                 ),
+                const SizedBox(height: 1),
+                Text(_subtitle, style: PickerTokens.mono(context, size: 11)),
               ],
             ),
           ),
-          IconButton(
-            icon: const Icon(Icons.close_rounded),
+          _SquareButton(
+            icon: Icons.close_rounded,
             tooltip: widget.scope == PickerScope.chooseVersion
                 ? 'Skip this card'
                 : 'Close',
-            onPressed: () => Navigator.of(context).pop(),
+            onTap: () => Navigator.of(context).pop(),
           ),
         ],
       ),
     );
   }
 
-  Widget _searchField(BuildContext context) => Padding(
-        padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+  Widget _searchField(BuildContext context) {
+    final t = PickerTokens.of(context);
+    return Padding(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
         child: TextField(
+          style: PickerTokens.mono(context, size: 13, color: t.text),
           controller: _searchController,
           autofocus: widget.scope == PickerScope.manualAdd,
           textInputAction: TextInputAction.search,
@@ -267,21 +278,36 @@ class _CardPickerState extends State<CardPicker> {
           },
           decoration: InputDecoration(
             isDense: true,
+            filled: true,
+            fillColor: t.surface2,
             hintText: 'Name, or name and set — "bolt 2xm"',
-            prefixIcon: const Icon(Icons.search_rounded, size: 20),
+            hintStyle: PickerTokens.mono(context, size: 12, color: t.textFaint),
+            prefixIcon: Icon(Icons.search_rounded, size: 18, color: t.textFaint),
+            prefixIconConstraints:
+                const BoxConstraints(minWidth: 34, minHeight: 34),
             suffixIcon: _searchController.text.isEmpty
                 ? null
                 : IconButton(
-                    icon: const Icon(Icons.clear_rounded, size: 18),
+                    icon: Icon(Icons.clear_rounded, size: 16, color: t.textDim),
                     onPressed: () {
                       _searchController.clear();
                       _runSearch('');
                     },
                   ),
-            border: const OutlineInputBorder(),
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(PickerTokens.radiusSmall),
+              borderSide: BorderSide(color: t.line),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(PickerTokens.radiusSmall),
+              borderSide: BorderSide(color: t.accent),
+            ),
           ),
         ),
       );
+  }
 
   Widget _grid() {
     if (_shown.isEmpty) {
@@ -378,6 +404,7 @@ class _Tile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final t = PickerTokens.of(context);
     final url = ScryfallCard.imageUrlFor(card.id, card.imageUpdatedAt);
 
     return Column(
@@ -406,59 +433,56 @@ class _Tile extends StatelessWidget {
                               _placeholder(theme, Icons.wifi_off_rounded),
                         ),
                 ),
+                // A pill reading IN LIST, not a tick. A tick means "selected",
+                // which is close enough to be misread and means the opposite.
                 if (inList)
-                  Positioned(
-                    top: 4,
-                    right: 4,
-                    child: _Badge(
-                      icon: Icons.check_rounded,
-                      color: theme.colorScheme.primary,
-                    ),
-                  ),
+                  Positioned(top: 5, left: 5, child: _InListPill(tokens: t)),
               ],
             ),
           ),
         ),
-        const SizedBox(height: 4),
+        const SizedBox(height: 5),
         Text(
           card.name,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: theme.textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600),
+          style: TextStyle(
+            fontSize: 12.5,
+            fontWeight: FontWeight.w600,
+            height: 1.25,
+            color: t.text,
+          ),
         ),
         Text(
           '${card.setCode.toUpperCase()} · ${card.collectorNumber}',
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: theme.textTheme.labelSmall?.copyWith(
-            color: theme.colorScheme.onSurfaceVariant,
-            fontFeatures: const [FontFeature.tabularFigures()],
-          ),
+          style: PickerTokens.mono(context, size: 10.5),
         ),
         // The shortcut for "just give me another copy" — it is what makes adding
         // several versions in one visit possible without leaving the grid.
-        SizedBox(
-          height: 28,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              _StepButton(
-                icon: Icons.remove_rounded,
-                onTap: queued == 0 ? null : () => onBump(-1),
-              ),
-              Text(
-                '$queued',
-                style: theme.textTheme.labelMedium?.copyWith(
-                  fontWeight: queued > 0 ? FontWeight.w700 : FontWeight.w400,
-                  color: queued > 0 ? null : theme.disabledColor,
+        const SizedBox(height: 4),
+        Row(
+          children: [
+            _StepButton(
+              icon: Icons.remove_rounded,
+              onTap: queued == 0 ? null : () => onBump(-1),
+            ),
+            Expanded(
+              child: Center(
+                child: Text(
+                  '$queued',
+                  style: PickerTokens.mono(
+                    context,
+                    size: 12,
+                    weight: queued > 0 ? FontWeight.w600 : FontWeight.w400,
+                    color: queued > 0 ? t.text : t.textFaint,
+                  ),
                 ),
               ),
-              _StepButton(
-                icon: Icons.add_rounded,
-                onTap: () => onBump(1),
-              ),
-            ],
-          ),
+            ),
+            _StepButton(icon: Icons.add_rounded, onTap: () => onBump(1)),
+          ],
         ),
       ],
     );
@@ -486,6 +510,7 @@ class _Tile extends StatelessWidget {
       );
 }
 
+/// The square tap target the artifact uses wherever a value is nudged.
 class _StepButton extends StatelessWidget {
   final IconData icon;
   final VoidCallback? onTap;
@@ -493,32 +518,78 @@ class _StepButton extends StatelessWidget {
   const _StepButton({required this.icon, this.onTap});
 
   @override
-  Widget build(BuildContext context) => InkResponse(
-        onTap: onTap,
-        radius: 18,
-        child: Padding(
-          padding: const EdgeInsets.all(4),
-          child: Icon(
-            icon,
-            size: 18,
-            color: onTap == null
-                ? Theme.of(context).disabledColor
-                : Theme.of(context).colorScheme.onSurface,
-          ),
+  Widget build(BuildContext context) {
+    final t = PickerTokens.of(context);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(7),
+      child: Container(
+        width: 28,
+        height: 28,
+        decoration: BoxDecoration(
+          color: t.surface2,
+          border: Border.all(color: t.line),
+          borderRadius: BorderRadius.circular(7),
         ),
-      );
+        child: Icon(icon, size: 15, color: onTap == null ? t.textFaint : t.text),
+      ),
+    );
+  }
 }
 
-class _Badge extends StatelessWidget {
+class _SquareButton extends StatelessWidget {
   final IconData icon;
-  final Color color;
+  final String tooltip;
+  final VoidCallback onTap;
 
-  const _Badge({required this.icon, required this.color});
+  const _SquareButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = PickerTokens.of(context);
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(PickerTokens.radiusSmall),
+        child: Container(
+          width: 30,
+          height: 30,
+          decoration: BoxDecoration(
+            color: t.surface2,
+            border: Border.all(color: t.line),
+            borderRadius: BorderRadius.circular(PickerTokens.radiusSmall),
+          ),
+          child: Icon(icon, size: 16, color: t.textDim),
+        ),
+      ),
+    );
+  }
+}
+
+class _InListPill extends StatelessWidget {
+  final PickerTokens tokens;
+  const _InListPill({required this.tokens});
 
   @override
   Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.all(3),
-        decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-        child: Icon(icon, size: 12, color: Theme.of(context).colorScheme.onPrimary),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+        decoration: BoxDecoration(
+          color: tokens.accent,
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Text(
+          'IN LIST',
+          style: PickerTokens.mono(
+            context,
+            size: 9,
+            weight: FontWeight.w600,
+            color: tokens.ground,
+          ),
+        ),
       );
 }

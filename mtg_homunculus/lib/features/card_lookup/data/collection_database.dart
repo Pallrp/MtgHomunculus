@@ -67,6 +67,20 @@ abstract final class VariantDefaults {
   static const condition = Condition.nearMint;
 }
 
+/// The printing a variant row points at, when it is not the card the editor was
+/// opened on.
+///
+/// A variant can be changed to a different edition, at which point it stops
+/// being a variant *of that card* and becomes an entry of another printing. The
+/// snapshot travels with it because the entry it becomes needs one.
+typedef VariantPrinting = ({
+  String cardId,
+  String name,
+  String setCode,
+  String setName,
+  String collectorNumber,
+});
+
 /// One row of the variant editor — a variant the list should end up holding.
 ///
 /// The editor opens showing the variants already in the list, so what it hands
@@ -76,6 +90,12 @@ class VariantEdit {
   final int finish;
   final String language;
   final int condition;
+
+  /// Null means "the card the editor was opened on".
+  ///
+  /// Set when the user changed this row's edition. On save it leaves this
+  /// card's variant set and is written under the printing it now names.
+  final VariantPrinting? printing;
 
   /// Null means "leave whatever this variant already had".
   ///
@@ -89,7 +109,23 @@ class VariantEdit {
     this.language = VariantDefaults.language,
     this.condition = VariantDefaults.condition,
     this.quantity,
+    this.printing,
   });
+
+  VariantEdit copyWith({
+    int? finish,
+    String? language,
+    int? condition,
+    int? quantity,
+    VariantPrinting? printing,
+  }) =>
+      VariantEdit(
+        finish: finish ?? this.finish,
+        language: language ?? this.language,
+        condition: condition ?? this.condition,
+        quantity: quantity ?? this.quantity,
+        printing: printing ?? this.printing,
+      );
 
   /// The variant an existing entry represents, for prepopulating the editor.
   factory VariantEdit.of(Entry e) => VariantEdit(
@@ -554,6 +590,26 @@ class CollectionDatabase extends _$CollectionDatabase {
 
       final keep = <int>{};
       for (final w in wanted) {
+        // A row pointing at another printing has left this card's variant set.
+        // It is written under the printing it now names, and whatever row it
+        // came from falls out of `keep` and is deleted below.
+        final moved = w.printing;
+        if (moved != null && moved.cardId != cardId) {
+          await addCard(
+            listId: listId,
+            cardId: moved.cardId,
+            name: moved.name,
+            setCode: moved.setCode,
+            setName: moved.setName,
+            collectorNumber: moved.collectorNumber,
+            finish: w.finish,
+            language: w.language,
+            condition: w.condition,
+            quantity: w.quantity ?? 1,
+          );
+          continue;
+        }
+
         final key = (w.finish, w.language, w.condition);
         final row = byKey[key];
         if (row == null) {

@@ -128,6 +128,7 @@ class _CardDetailScreenState extends State<CardDetailScreen> {
       listId: entry.listId,
       cardId: entry.cardId,
       db: widget.collection,
+      cards: widget.cards,
       imageUpdatedAt: _printing?.imageUpdatedAt,
     );
     if (mounted) await _load();

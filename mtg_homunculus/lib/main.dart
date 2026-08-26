@@ -1,11 +1,13 @@
 import 'dart:ui' show PlatformDispatcher;
 
 import 'package:flutter/material.dart';
+
 // ignore: unnecessary_import — explicit for debugPaintSizeEnabled (wireframe mode)
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'app_shell.dart';
+import 'features/card_lookup/theme/picker_tokens.dart';
 import 'core/logging/app_logger.dart';
 import 'features/settings/models/app_settings.dart';
 import 'features/settings/models/game_tracker_settings.dart';
@@ -98,6 +100,9 @@ class _MtgHomunculusAppState extends State<MtgHomunculusApp> {
       debugShowCheckedModeBanner: false,
       themeMode: _materialThemeMode,
       theme: ThemeData(
+        // The card-lookup palette rides alongside the app's own colours rather
+        // than replacing them — see PickerTokens.
+        extensions: const [PickerTokens.light],
         brightness: Brightness.light,
         scaffoldBackgroundColor: const Color(0xFFF2F4F5),
         colorScheme: ColorScheme.light(
@@ -124,6 +129,7 @@ class _MtgHomunculusAppState extends State<MtgHomunculusApp> {
         ),
       ),
       darkTheme: ThemeData(
+        extensions: const [PickerTokens.dark],
         brightness: Brightness.dark,
         scaffoldBackgroundColor: const Color(0xFF1A1A1A),
         colorScheme: ColorScheme.dark(

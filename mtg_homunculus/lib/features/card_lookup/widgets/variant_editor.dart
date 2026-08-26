@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 
+import '../data/cards_database.dart';
 import '../data/collection_database.dart';
 import '../models/scan_defaults.dart';
 import '../models/scryfall_card.dart';
+import '../theme/picker_tokens.dart';
 import 'attribute_chips.dart';
+import 'card_picker.dart';
 
 /// Every copy of one printing, in one place.
 ///
@@ -21,6 +24,9 @@ class VariantEditor extends StatefulWidget {
   final int listId;
   final String cardId;
   final CollectionDatabase db;
+
+  /// Needed for Change Edition, which lists and searches printings.
+  final CardsDatabase cards;
   final int? imageUpdatedAt;
 
   const VariantEditor({
@@ -28,6 +34,7 @@ class VariantEditor extends StatefulWidget {
     required this.listId,
     required this.cardId,
     required this.db,
+    required this.cards,
     this.imageUpdatedAt,
   });
 
@@ -36,6 +43,7 @@ class VariantEditor extends StatefulWidget {
     required int listId,
     required String cardId,
     required CollectionDatabase db,
+    required CardsDatabase cards,
     int? imageUpdatedAt,
   }) =>
       showModalBottomSheet<bool>(
@@ -46,6 +54,7 @@ class VariantEditor extends StatefulWidget {
           listId: listId,
           cardId: cardId,
           db: db,
+          cards: cards,
           imageUpdatedAt: imageUpdatedAt,
         ),
       );
@@ -127,8 +136,27 @@ class _VariantEditorState extends State<VariantEditor> {
     );
   }
 
+  /// Tapping a row opens it as its own detail sheet.
+  ///
+  /// Save there commits into this editor's list, not to the database — so
+  /// cancelling out of the editor afterwards still discards everything, which is
+  /// what Cancel has always promised.
   Future<void> _editRow(int i) async {
-    final edited = await _VariantChipDialog.show(context, _rows[i]);
+    final sample = _sample;
+    if (sample == null) return;
+    final edited = await VariantDetailSheet.show(
+      context,
+      initial: _rows[i],
+      basePrinting: (
+        cardId: widget.cardId,
+        name: sample.snapName,
+        setCode: sample.snapSetCode,
+        setName: sample.snapSetName,
+        collectorNumber: sample.snapCollector,
+      ),
+      cards: widget.cards,
+      imageUpdatedAt: widget.imageUpdatedAt,
+    );
     if (edited == null) return;
     _replace(i, edited);
   }
@@ -353,91 +381,519 @@ class _VariantRow extends StatelessWidget {
   }
 }
 
-/// Tap a row to change its chips.
-class _VariantChipDialog extends StatefulWidget {
+/// One variant, opened from the editor's list.
+///
+/// **The same shape as Card Detail, minus what does not apply.** There is no
+/// Open Variants button — you are already inside it — and Save/Cancel commit to
+/// the editor rather than to the database, so a cancelled edit here leaves the
+/// list untouched exactly like a cancelled edit there.
+///
+/// Change Edition is present, because a copy differing only by printing is the
+/// same kind of "these are not one row" problem that variants exist for.
+class VariantDetailSheet extends StatefulWidget {
   final VariantEdit initial;
-  const _VariantChipDialog({required this.initial});
 
-  static Future<VariantEdit?> show(BuildContext context, VariantEdit initial) =>
-      showDialog<VariantEdit>(
+  /// The card the editor was opened on, used when this row has not been moved.
+  final VariantPrinting basePrinting;
+  final CardsDatabase cards;
+  final int? imageUpdatedAt;
+
+  const VariantDetailSheet({
+    super.key,
+    required this.initial,
+    required this.basePrinting,
+    required this.cards,
+    this.imageUpdatedAt,
+  });
+
+  static Future<VariantEdit?> show(
+    BuildContext context, {
+    required VariantEdit initial,
+    required VariantPrinting basePrinting,
+    required CardsDatabase cards,
+    int? imageUpdatedAt,
+  }) =>
+      showModalBottomSheet<VariantEdit>(
         context: context,
-        builder: (_) => _VariantChipDialog(initial: initial),
+        isScrollControlled: true,
+        useSafeArea: true,
+        builder: (_) => VariantDetailSheet(
+          initial: initial,
+          basePrinting: basePrinting,
+          cards: cards,
+          imageUpdatedAt: imageUpdatedAt,
+        ),
       );
 
   @override
-  State<_VariantChipDialog> createState() => _VariantChipDialogState();
+  State<VariantDetailSheet> createState() => _VariantDetailSheetState();
 }
 
-class _VariantChipDialogState extends State<_VariantChipDialog> {
-  late int _finish = widget.initial.finish;
-  late String _language = widget.initial.language;
-  late int _condition = widget.initial.condition;
+class _VariantDetailSheetState extends State<VariantDetailSheet> {
+  late VariantEdit _edit = widget.initial;
 
-  static const _languages = ['en', 'es', 'fr', 'de', 'it', 'pt', 'ja', 'ko',
-      'ru', 'zhs', 'zht'];
+  /// Available finishes for whichever printing this row currently names. Null
+  /// until looked up, and stays null when the card cache is gone.
+  int? _finishes;
+
+  VariantPrinting get _printing => _edit.printing ?? widget.basePrinting;
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
-        title: const Text('Variant'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            SegmentedButton<int>(
-              showSelectedIcon: false,
-              segments: [
-                for (final f in Finish.all)
-                  ButtonSegment(value: f, label: Text(Finish.label(f))),
-              ],
-              selected: {_finish},
-              onSelectionChanged: (s) => setState(() => _finish = s.first),
-            ),
-            const SizedBox(height: 12),
-            Row(
+  void initState() {
+    super.initState();
+    _loadFinishes();
+  }
+
+  Future<void> _loadFinishes() async {
+    final card = await widget.cards.cardById(_printing.cardId);
+    if (mounted) setState(() => _finishes = card?.finishes);
+  }
+
+  Future<void> _changeEdition() async {
+    // Opens on every printing of this card, with the search field live so a set
+    // code narrows it — the list is hundreds long for a reprinted card.
+    final printings = await widget.cards.printingsOf(_printing.name);
+    if (!mounted) return;
+    final picked = await CardPicker.showSheet(
+      context,
+      scope: PickerScope.changeVersion,
+      db: widget.cards,
+      initial: printings,
+    );
+    if (picked == null || !mounted) return;
+
+    final set = await (widget.cards.select(widget.cards.sets)
+          ..where((x) => x.code.equals(picked.card.setCode)))
+        .getSingleOrNull();
+    if (!mounted) return;
+
+    setState(() {
+      _edit = _edit.copyWith(printing: (
+        cardId: picked.card.id,
+        name: picked.card.name,
+        setCode: picked.card.setCode,
+        setName: set?.name ?? picked.card.setCode.toUpperCase(),
+        collectorNumber: picked.card.collectorNumber,
+      ));
+      _finishes = null;
+    });
+    _loadFinishes();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = PickerTokens.of(context);
+    final printing = _printing;
+    final url = ScryfallCard.imageUrlFor(
+      printing.cardId,
+      _edit.printing == null ? widget.imageUpdatedAt : null,
+    );
+    final qty = _edit.quantity ?? 1;
+
+    return DraggableScrollableSheet(
+      expand: false,
+      initialChildSize: 0.62,
+      maxChildSize: 0.92,
+      minChildSize: 0.4,
+      builder: (context, scrollController) => Column(
+        children: [
+          Expanded(
+            child: ListView(
+              controller: scrollController,
+              padding: const EdgeInsets.fromLTRB(14, 14, 14, 8),
               children: [
-                const Text('Language'),
-                const Spacer(),
-                DropdownButton<String>(
-                  value: _languages.contains(_language) ? _language : 'en',
-                  items: [
-                    for (final l in _languages)
-                      DropdownMenuItem(value: l, child: Text(l.toUpperCase())),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(
+                      width: 92,
+                      child: AspectRatio(
+                        aspectRatio: 0.716,
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(6),
+                          child: url == null
+                              ? ColoredBox(color: t.surface2)
+                              : Image.network(
+                                  url,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (c, _, _) =>
+                                      ColoredBox(color: t.surface2),
+                                ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            printing.name,
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                              color: t.text,
+                            ),
+                          ),
+                          Text(
+                            '${printing.setCode.toUpperCase()} · '
+                            '${printing.collectorNumber}',
+                            style: PickerTokens.mono(context, size: 11),
+                          ),
+                          const SizedBox(height: 12),
+                          _Field(
+                            label: 'Qty',
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                _Tap(
+                                  icon: Icons.remove_rounded,
+                                  onTap: qty <= 1
+                                      ? null
+                                      : () => setState(() =>
+                                          _edit = _edit.copyWith(
+                                              quantity: qty - 1)),
+                                ),
+                                SizedBox(
+                                  width: 28,
+                                  child: Center(
+                                    child: Text(
+                                      '$qty',
+                                      style: PickerTokens.mono(
+                                        context,
+                                        size: 13,
+                                        weight: FontWeight.w600,
+                                        color: t.text,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                _Tap(
+                                  icon: Icons.add_rounded,
+                                  onTap: () => setState(() =>
+                                      _edit =
+                                          _edit.copyWith(quantity: qty + 1)),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ],
-                  onChanged: (v) => setState(() => _language = v ?? 'en'),
                 ),
-              ],
-            ),
-            Row(
-              children: [
-                const Text('Condition'),
-                const Spacer(),
-                DropdownButton<int>(
-                  value: _condition,
-                  items: [
-                    for (final c in Condition.all)
-                      DropdownMenuItem(value: c, child: Text(Condition.label(c))),
-                  ],
+                const SizedBox(height: 16),
+                _FinishField(
+                  value: _edit.finish,
+                  available: _finishes,
                   onChanged: (v) =>
-                      setState(() => _condition = v ?? Condition.nearMint),
+                      setState(() => _edit = _edit.copyWith(finish: v)),
+                ),
+                _LanguageField(
+                  value: _edit.language,
+                  onChanged: (v) =>
+                      setState(() => _edit = _edit.copyWith(language: v)),
+                ),
+                _ConditionField(
+                  value: _edit.condition,
+                  onChanged: (v) =>
+                      setState(() => _edit = _edit.copyWith(condition: v)),
+                ),
+                const SizedBox(height: 16),
+                _OutlineButton(
+                  icon: Icons.swap_horiz_rounded,
+                  label: 'Change Edition',
+                  onTap: _changeEdition,
                 ),
               ],
+            ),
+          ),
+          Divider(height: 1, color: t.line),
+          SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: _OutlineButton(
+                      label: 'Cancel',
+                      onTap: () => Navigator.of(context).pop(),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _OutlineButton(
+                      label: 'Save',
+                      primary: true,
+                      onTap: () => Navigator.of(context).pop(_edit),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+
+class _Field extends StatelessWidget {
+  final String label;
+  final Widget child;
+  const _Field({required this.label, required this.child});
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 5),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 62,
+              child: Text(label.toUpperCase(),
+                  style: PickerTokens.fieldLabel(context)),
+            ),
+            Expanded(
+              child: Align(alignment: Alignment.centerLeft, child: child),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(VariantEdit(
-              finish: _finish,
-              language: _language,
-              condition: _condition,
-              quantity: widget.initial.quantity,
-            )),
-            child: const Text('Done'),
-          ),
-        ],
       );
+}
+
+/// Finish is not a boolean — see `card_management_ui.md`. Built from what the
+/// printing reports, and absent entirely when there is only one.
+class _FinishField extends StatelessWidget {
+  final int value;
+  final int? available;
+  final void Function(int) onChanged;
+
+  const _FinishField({
+    required this.value,
+    required this.available,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = PickerTokens.of(context);
+    final mask = available ?? (Finish.nonfoil | Finish.foil | Finish.etched);
+    final options = [
+      for (final f in Finish.all)
+        if (mask & f != 0) f,
+    ];
+    if (options.length < 2) return const SizedBox.shrink();
+
+    return _Field(
+      label: 'Finish',
+      child: Container(
+        decoration: BoxDecoration(
+          border: Border.all(color: t.line),
+          borderRadius: BorderRadius.circular(PickerTokens.radiusSmall),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final f in options)
+              InkWell(
+                onTap: () => onChanged(f),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: f != value
+                        ? null
+                        : f == Finish.foil
+                            ? null
+                            : t.accentSoft,
+                    gradient: f == value && f == Finish.foil
+                        ? PickerTokens.foil
+                        : null,
+                    border: Border(right: BorderSide(color: t.line)),
+                  ),
+                  child: Text(
+                    Finish.label(f),
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight:
+                          f == value ? FontWeight.w600 : FontWeight.w400,
+                      color: f != value
+                          ? t.textDim
+                          : f == Finish.foil
+                              ? PickerTokens.onFoil
+                              : t.accent,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _LanguageField extends StatelessWidget {
+  final String value;
+  final void Function(String) onChanged;
+
+  const _LanguageField({required this.value, required this.onChanged});
+
+  static const languages = [
+    'en', 'es', 'fr', 'de', 'it', 'pt', 'ja', 'ko', 'ru', 'zhs', 'zht',
+  ];
+
+  @override
+  Widget build(BuildContext context) => _Field(
+        label: 'Language',
+        child: _Dropdown<String>(
+          value: languages.contains(value) ? value : 'en',
+          items: languages,
+          labelOf: (v) => v.toUpperCase(),
+          onChanged: onChanged,
+        ),
+      );
+}
+
+class _ConditionField extends StatelessWidget {
+  final int value;
+  final void Function(int) onChanged;
+
+  const _ConditionField({required this.value, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) => _Field(
+        label: 'Condition',
+        child: _Dropdown<int>(
+          value: value,
+          items: Condition.all,
+          labelOf: Condition.label,
+          // The one place a dropdown carries the condition ramp's warn colour,
+          // so a played card reads as played before it is opened.
+          warn: value != Condition.nearMint,
+          onChanged: onChanged,
+        ),
+      );
+}
+
+class _Dropdown<T> extends StatelessWidget {
+  final T value;
+  final List<T> items;
+  final String Function(T) labelOf;
+  final void Function(T) onChanged;
+  final bool warn;
+
+  const _Dropdown({
+    required this.value,
+    required this.items,
+    required this.labelOf,
+    required this.onChanged,
+    this.warn = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = PickerTokens.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 1),
+      decoration: BoxDecoration(
+        color: warn ? t.warnBg : null,
+        border: Border.all(color: warn ? t.warn : t.line),
+        borderRadius: BorderRadius.circular(PickerTokens.radiusSmall),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<T>(
+          value: value,
+          isDense: true,
+          style: PickerTokens.mono(
+            context,
+            size: 12,
+            color: warn ? t.warn : t.textDim,
+          ),
+          items: [
+            for (final i in items)
+              DropdownMenuItem(value: i, child: Text(labelOf(i))),
+          ],
+          onChanged: (v) => v == null ? null : onChanged(v),
+        ),
+      ),
+    );
+  }
+}
+
+class _Tap extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback? onTap;
+  const _Tap({required this.icon, this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = PickerTokens.of(context);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(PickerTokens.radiusSmall),
+      child: Container(
+        width: 30,
+        height: 30,
+        decoration: BoxDecoration(
+          color: t.surface2,
+          border: Border.all(color: t.line),
+          borderRadius: BorderRadius.circular(PickerTokens.radiusSmall),
+        ),
+        child: Icon(icon, size: 15, color: onTap == null ? t.textFaint : t.text),
+      ),
+    );
+  }
+}
+
+class _OutlineButton extends StatelessWidget {
+  final String label;
+  final IconData? icon;
+  final bool primary;
+  final VoidCallback onTap;
+
+  const _OutlineButton({
+    required this.label,
+    required this.onTap,
+    this.icon,
+    this.primary = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = PickerTokens.of(context);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(9),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+        decoration: BoxDecoration(
+          color: primary ? t.accent : null,
+          border: Border.all(color: primary ? t.accent : t.line),
+          borderRadius: BorderRadius.circular(9),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            if (icon != null) ...[
+              Icon(icon, size: 16, color: primary ? t.ground : t.textDim),
+              const SizedBox(width: 6),
+            ],
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: primary ? t.ground : t.textDim,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

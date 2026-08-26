@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../data/collection_database.dart';
 import '../models/scan_defaults.dart';
 import '../models/scryfall_card.dart';
+import '../theme/picker_tokens.dart';
 import 'attribute_chips.dart';
 import 'scanner_overlay.dart' show CaptureButton;
 
@@ -103,7 +104,11 @@ class ListingSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
+    final t = PickerTokens.of(context);
+    // The system navigation bar sits under the sheet's bottom edge, so without
+    // this the peek row is drawn behind it. Derived from the device rather than
+    // guessed: gesture navigation and a three-button bar are different heights.
+    final navBar = MediaQuery.viewPaddingOf(context).bottom;
 
     return Stack(
       children: [
@@ -113,9 +118,9 @@ class ListingSheet extends StatelessWidget {
           right: 0,
           bottom: 0,
           child: Material(
-            color: cs.surface,
+            color: t.surface,
             borderRadius:
-                const BorderRadius.vertical(top: Radius.circular(16)),
+                const BorderRadius.vertical(top: Radius.circular(14)),
             clipBehavior: Clip.antiAlias,
             child: CustomScrollView(
               controller: scrollController,
@@ -127,7 +132,7 @@ class ListingSheet extends StatelessWidget {
                   SliverToBoxAdapter(child: _empty(context))
                 else
                   _rows(context),
-                const SliverToBoxAdapter(child: SizedBox(height: 24)),
+                SliverToBoxAdapter(child: SizedBox(height: 16 + navBar)),
               ],
             ),
           ),
@@ -152,52 +157,61 @@ class ListingSheet extends StatelessWidget {
 
   /// Peek shows the list's identity; full adds the management controls.
   Widget _bar(BuildContext context) {
-    final theme = Theme.of(context);
+    final t = PickerTokens.of(context);
     final unique = entries.length;
 
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, _buttonHalf + 4, 8, 4),
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, _buttonHalf + 6, 8, 8),
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: t.line)),
+      ),
       child: Row(
         children: [
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(listName,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.titleSmall),
+                Text(
+                  listName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: t.text,
+                  ),
+                ),
                 Text(
                   '$_copies ${_copies == 1 ? "card" : "cards"}'
                   '${unique == _copies ? "" : " · $unique unique"}',
-                  style: theme.textTheme.bodySmall
-                      ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                  style: PickerTokens.mono(context, size: 10.5),
                 ),
               ],
             ),
           ),
           if (_full) ...[
-            IconButton(
-              icon: const Icon(Icons.sort_rounded),
+            _IconBtn(
+              icon: Icons.sort_rounded,
               tooltip: 'Sort',
-              onPressed: () => _pickSort(context),
+              onTap: () => _pickSort(context),
             ),
-            IconButton(
-              icon: Icon(_selecting
-                  ? Icons.checklist_rtl_rounded
-                  : Icons.checklist_rounded),
+            const SizedBox(width: 6),
+            _IconBtn(
+              icon: Icons.checklist_rounded,
               tooltip: 'Select',
               // Opens with everything preselected — the common case is "all of
               // these go somewhere", and deselecting a few is less work than
               // ticking eighteen.
-              onPressed: () => onSelectionChanged(
+              active: _selecting,
+              onTap: () => onSelectionChanged(
                 _selecting ? {} : {for (final e in entries) e.id},
               ),
             ),
-            IconButton(
-              icon: const Icon(Icons.more_vert_rounded),
+            const SizedBox(width: 6),
+            _IconBtn(
+              icon: Icons.more_horiz_rounded,
               tooltip: 'List settings',
-              onPressed: () => _listSettings(context),
+              onTap: () => _listSettings(context),
             ),
           ],
         ],
@@ -210,40 +224,50 @@ class ListingSheet extends StatelessWidget {
   /// The camera button and the list identity keep meaning what they meant, so
   /// nothing the user learned a moment ago stops being true while selecting.
   Widget _selectionBar(BuildContext context) {
-    final theme = Theme.of(context);
+    final t = PickerTokens.of(context);
     final all = selected.length == entries.length;
 
     return Container(
-      color: theme.colorScheme.surfaceContainerHighest,
-      padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
+      decoration: BoxDecoration(
+        color: t.accentSoft,
+        border: Border(bottom: BorderSide(color: t.accent)),
+      ),
+      padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
       child: Row(
         children: [
-          IconButton(
-            icon: Icon(all
+          _IconBtn(
+            icon: all
                 ? Icons.check_box_rounded
-                : Icons.check_box_outline_blank_rounded),
+                : Icons.check_box_outline_blank_rounded,
             tooltip: all ? 'Deselect all' : 'Select all',
-            onPressed: () => onSelectionChanged(
+            active: all,
+            onTap: () => onSelectionChanged(
               all ? {} : {for (final e in entries) e.id},
             ),
           ),
-          Text('${selected.length} selected',
-              style: theme.textTheme.labelLarge),
-          const Spacer(),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '${selected.length} selected',
+              style: PickerTokens.mono(
+                context,
+                size: 12,
+                weight: FontWeight.w600,
+                color: t.accent,
+              ),
+            ),
+          ),
           // The trailing preposition is deliberate: both open a destination
           // picker rather than acting immediately.
-          TextButton(
-            onPressed: () => onMoveTo(selected, true),
-            child: const Text('Cut to'),
-          ),
-          TextButton(
-            onPressed: () => onMoveTo(selected, false),
-            child: const Text('Copy to'),
-          ),
-          IconButton(
-            icon: const Icon(Icons.delete_outline_rounded),
+          _TextBtn(label: 'Cut to', onTap: () => onMoveTo(selected, true)),
+          const SizedBox(width: 6),
+          _TextBtn(label: 'Copy to', onTap: () => onMoveTo(selected, false)),
+          const SizedBox(width: 6),
+          _IconBtn(
+            icon: Icons.delete_outline_rounded,
             tooltip: 'Remove from list',
-            onPressed: () => onDeleteSelected(selected),
+            danger: true,
+            onTap: () => onDeleteSelected(selected),
           ),
         ],
       ),
@@ -251,12 +275,10 @@ class ListingSheet extends StatelessWidget {
   }
 
   Widget _empty(BuildContext context) => Padding(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 16),
         child: Text(
           'No cards yet — scan to add.',
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
+          style: PickerTokens.mono(context, size: 12),
         ),
       );
 
@@ -440,6 +462,7 @@ class _EntryRowState extends State<_EntryRow>
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final t = PickerTokens.of(context);
     final e = widget.entry;
     final url = ScryfallCard.imageUrlFor(e.cardId, null, size: 'small');
 
@@ -486,16 +509,21 @@ class _EntryRowState extends State<_EntryRow>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(e.snapName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodyMedium),
+                  Text(
+                    e.snapName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: t.text,
+                    ),
+                  ),
                   Text(
                     '${e.snapSetCode.toUpperCase()} · ${e.snapCollector}',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodySmall
-                        ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                    style: PickerTokens.mono(context, size: 10.5),
                   ),
                   const SizedBox(height: 3),
                   AttributeChips(
@@ -515,9 +543,15 @@ class _EntryRowState extends State<_EntryRow>
                 onChanged: widget.onSetQty,
               )
             else
-              Text('${e.quantity}×',
-                  style: theme.textTheme.titleSmall
-                      ?.copyWith(fontWeight: FontWeight.w700)),
+              Text(
+                '${e.quantity}×',
+                style: PickerTokens.mono(
+                  context,
+                  size: 13,
+                  weight: FontWeight.w600,
+                  color: t.textDim,
+                ),
+              ),
           ],
         ),
       ),
@@ -531,14 +565,14 @@ class _EntryRowState extends State<_EntryRow>
       background: Container(
         alignment: Alignment.centerRight,
         padding: const EdgeInsets.only(right: 20),
-        color: theme.colorScheme.error,
+        color: t.vermilion,
         child: const Icon(Icons.delete_outline_rounded, color: Colors.white),
       ),
       onDismissed: (_) => widget.onDelete(),
       child: AnimatedBuilder(
         animation: _pulse,
         builder: (context, child) => ColoredBox(
-          color: theme.colorScheme.primary.withValues(alpha: 0.18 * _pulse.value),
+          color: t.accent.withValues(alpha: 0.22 * _pulse.value),
           child: child,
         ),
         child: row,
@@ -554,24 +588,116 @@ class _Stepper extends StatelessWidget {
   const _Stepper({required this.quantity, required this.onChanged});
 
   @override
-  Widget build(BuildContext context) => Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            icon: Icon(quantity <= 1
-                ? Icons.delete_outline_rounded
-                : Icons.remove_rounded),
-            onPressed: () => onChanged(quantity - 1),
-            tooltip: quantity <= 1 ? 'Remove' : 'One fewer',
+  Widget build(BuildContext context) {
+    final t = PickerTokens.of(context);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _IconBtn(
+          icon: quantity <= 1
+              ? Icons.delete_outline_rounded
+              : Icons.remove_rounded,
+          tooltip: quantity <= 1 ? 'Remove' : 'One fewer',
+          danger: quantity <= 1,
+          onTap: () => onChanged(quantity - 1),
+        ),
+        SizedBox(
+          width: 26,
+          child: Center(
+            child: Text(
+              '$quantity',
+              style: PickerTokens.mono(
+                context,
+                size: 13,
+                weight: FontWeight.w600,
+                color: t.text,
+              ),
+            ),
           ),
-          Text('$quantity', style: Theme.of(context).textTheme.titleSmall),
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            icon: const Icon(Icons.add_rounded),
-            onPressed: () => onChanged(quantity + 1),
-            tooltip: 'One more',
+        ),
+        _IconBtn(
+          icon: Icons.add_rounded,
+          tooltip: 'One more',
+          onTap: () => onChanged(quantity + 1),
+        ),
+      ],
+    );
+  }
+}
+
+/// The bordered square the artifact uses for every icon action.
+class _IconBtn extends StatelessWidget {
+  final IconData icon;
+  final String tooltip;
+  final bool active;
+  final bool danger;
+  final VoidCallback onTap;
+
+  const _IconBtn({
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+    this.active = false,
+    this.danger = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = PickerTokens.of(context);
+    final (Color fg, Color bg, Color border) = danger
+        ? (t.vermilion, Colors.transparent, t.vermilion)
+        : active
+            ? (t.ground, t.accent, t.accent)
+            : (t.text, t.surface2, t.line);
+
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(9),
+        child: Container(
+          width: 32,
+          height: 32,
+          decoration: BoxDecoration(
+            color: bg,
+            border: Border.all(color: border),
+            borderRadius: BorderRadius.circular(9),
           ),
-        ],
-      );
+          child: Icon(icon, size: 16, color: fg),
+        ),
+      ),
+    );
+  }
+}
+
+/// An outlined accent action — "Cut to", "Copy to".
+class _TextBtn extends StatelessWidget {
+  final String label;
+  final VoidCallback onTap;
+
+  const _TextBtn({required this.label, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = PickerTokens.of(context);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(PickerTokens.radiusSmall),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        decoration: BoxDecoration(
+          border: Border.all(color: t.accent),
+          borderRadius: BorderRadius.circular(PickerTokens.radiusSmall),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: t.accent,
+          ),
+        ),
+      ),
+    );
+  }
 }

@@ -267,6 +267,55 @@ void main() {
       expect(await db.entriesForCard(listId, 'c1'), isEmpty);
     });
 
+    test('a variant changed to another printing moves lists rows', () async {
+      // The editor holds every copy of one card. Changing a row's edition takes
+      // it out of that card's variant set and makes it an entry of the printing
+      // it now names.
+      await add(listId, quantity: 2);
+
+      await apply([
+        const VariantEdit(
+          finish: Finish.nonfoil,
+          printing: (
+            cardId: 'c2',
+            name: 'Swamp',
+            setCode: 'lci',
+            setName: 'Lost Caverns',
+            collectorNumber: '285',
+          ),
+        ),
+      ]);
+
+      expect(await db.entriesForCard(listId, 'c1'), isEmpty,
+          reason: 'it is no longer a variant of the card it started on');
+      final moved = (await db.entriesForCard(listId, 'c2')).single;
+      expect(moved.snapSetCode, 'lci');
+      expect(moved.snapCollector, '285');
+    });
+
+    test('a moved variant merges into an entry that already exists', () async {
+      await add(listId, quantity: 2);
+      await add(listId, cardId: 'c2', set: 'lci', num: '285', quantity: 1);
+
+      await apply([
+        const VariantEdit(
+          finish: Finish.nonfoil,
+          quantity: 3,
+          printing: (
+            cardId: 'c2',
+            name: 'Swamp',
+            setCode: 'lci',
+            setName: 'Lost Caverns',
+            collectorNumber: '285',
+          ),
+        ),
+      ]);
+
+      final rows = await db.entriesForCard(listId, 'c2');
+      expect(rows, hasLength(1));
+      expect(rows.single.quantity, 4);
+    });
+
     test('other cards in the list are untouched', () async {
       await add(listId);
       await add(listId, cardId: 'c2', name: 'Island');

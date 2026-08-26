@@ -31,13 +31,25 @@ class ListingDetailScreen extends StatefulWidget {
 }
 
 class _ListingDetailScreenState extends State<ListingDetailScreen> {
-  // Sheet constants.
-  // _minSheetSize must fit: button-half (34 px) + title row + divider + a
-  // small peek of the card list below.
-  static const double _minSheetSize    = 0.14;
+  // Sheet geometry.
+  //
+  // The peek height is structural — button-half, the management bar, and one
+  // card row — but it is expressed in pixels and converted per device, because
+  // a fixed fraction of screen height puts the row behind the system navigation
+  // bar on anything with one.
+  static const double _peekContentPx   = 150.0;
   static const double _maxSheetSize    = 0.88;
-  // Camera is active only when the sheet is at or near its minimum size.
-  static const double _activeThreshold = _minSheetSize + 0.03;
+
+  double _minSheetSize(BuildContext context) {
+    final media = MediaQuery.of(context);
+    final size = (_peekContentPx + media.viewPadding.bottom) / media.size.height;
+    // Never let it exceed the expanded size on a very short screen.
+    return size.clamp(0.10, _maxSheetSize - 0.05);
+  }
+
+  /// Camera is active only when the sheet is at or near its minimum size.
+  double _activeThreshold(BuildContext context) =>
+      _minSheetSize(context) + 0.03;
 
   final _sheetController = DraggableScrollableController();
   final _scannerKey      = GlobalKey<ScannerOverlayState>();
@@ -80,8 +92,8 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
   // ---------------------------------------------------------------------------
 
   void _onSheetChange() {
-    if (!_sheetController.isAttached) return;
-    final active = _sheetController.size <= _activeThreshold;
+    if (!_sheetController.isAttached || !mounted) return;
+    final active = _sheetController.size <= _activeThreshold(context);
     if (active != _cameraActive) setState(() => _cameraActive = active);
   }
 
@@ -91,8 +103,8 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
   /// separate blackout state: one gesture, one state, and reviewing what you
   /// collected is the likely next thing anyway.
   void _onScannerIdle() {
-    if (!_sheetController.isAttached) return;
-    if (_sheetController.size > _activeThreshold) return; // already open
+    if (!_sheetController.isAttached || !mounted) return;
+    if (_sheetController.size > _activeThreshold(context)) return; // open
     _sheetController.animateTo(
       _maxSheetSize,
       duration: const Duration(milliseconds: 280),
@@ -272,6 +284,8 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
       );
     }
 
+    final minSheet = _minSheetSize(context);
+
     return Scaffold(
       resizeToAvoidBottomInset: false,
       body: Stack(
@@ -293,19 +307,19 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
           // Draggable listing sheet.
           DraggableScrollableSheet(
             controller:       _sheetController,
-            initialChildSize: _minSheetSize,
-            minChildSize:     _minSheetSize,
+            initialChildSize: minSheet,
+            minChildSize:     minSheet,
             maxChildSize:     _maxSheetSize,
             snap:             true,
             // Peek and full only. A third stop would need its own answer to
             // "is the camera on?", which nobody could predict.
-            snapSizes:        const [_minSheetSize, _maxSheetSize],
+            snapSizes:        [minSheet, _maxSheetSize],
             builder: (context, scrollController) => ListingSheet(
               listName:         _list!.name,
               entries:          _entries,
               scrollController: scrollController,
               sheetController:  _sheetController,
-              minSheetSize:     _minSheetSize,
+              minSheetSize:     minSheet,
               cameraActive:     _cameraActive,
               detecting:        _detecting,
               pulseEntryId:     _pulseEntryId,
