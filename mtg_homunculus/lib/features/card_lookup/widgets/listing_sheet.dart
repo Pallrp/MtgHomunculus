@@ -102,16 +102,17 @@ class ListingSheet extends StatelessWidget {
 
   /// How tall the sheet must be at peek, before the navigation bar.
   ///
-  /// The surface starts a chevron-half down, the row needs another chevron-half
-  /// of clearance for the button sitting on it, then the row itself and a little
-  /// breathing room.
+  /// Three chevron-halves and a thumbnail: the surface starts one down, the row
+  /// clears the button by another, the card is [PickerTokens.thumbHeight] tall,
+  /// and the last one balances the first — so the space above the card and the
+  /// space below it are the same number, and the row sits centred in its own
+  /// strip rather than crowded against the navigation bar.
   ///
-  /// **This must not be less than the content**, or the peek list becomes
-  /// scrollable by a few pixels — and a scrollable that can move eats the
-  /// upward drag that would otherwise expand the sheet, which is exactly the
-  /// "jiggles but never opens" failure.
+  /// **This must match the content, not exceed it.** Too little and the peek
+  /// list becomes scrollable by a few pixels, which eats the upward drag that
+  /// would otherwise expand the sheet; too much and the row drifts off centre.
   static const double peekContent =
-      _chevHalf + _chevHalf + PickerTokens.rowHeight + 8;
+      _chevHalf * 3 + PickerTokens.thumbHeight;
 
   bool get _full => !cameraActive;
 
@@ -182,7 +183,12 @@ class ListingSheet extends StatelessWidget {
                   SliverToBoxAdapter(child: _empty(context))
                 else
                   _rows(context, rows),
-                SliverToBoxAdapter(child: SizedBox(height: navBar + 8)),
+                // Peek's own bottom breathing room is the row's padding, so
+                // this is only the navigation bar. The full list wants a little
+                // more, so its last row is not flush with the edge.
+                SliverToBoxAdapter(
+                  child: SizedBox(height: navBar + (_full ? 8 : 0)),
+                ),
               ],
             ),
           ),
@@ -593,14 +599,17 @@ class _EntryRowState extends State<_EntryRow>
       onTap: widget.onTap,
       child: Container(
         // Thumbnail-driven, so the chips ride along free.
-        constraints:
-            const BoxConstraints(minHeight: PickerTokens.rowHeight),
-        padding: EdgeInsets.fromLTRB(
-          10,
-          // Clearance for the chevron's lower half, which sits on the surface.
-          widget.peek ? ListingSheet._chevHalf : 8,
-          10,
-          8,
+        constraints: BoxConstraints(
+          minHeight: widget.peek
+              ? PickerTokens.thumbHeight
+              : PickerTokens.rowHeight,
+        ),
+        // In peek, the top clears the chevron's lower half and the bottom
+        // matches it, so the card sits evenly between the sheet edge and the
+        // navigation bar.
+        padding: EdgeInsets.symmetric(
+          horizontal: 10,
+          vertical: widget.peek ? ListingSheet._chevHalf : 8,
         ),
         child: Row(
           children: [
