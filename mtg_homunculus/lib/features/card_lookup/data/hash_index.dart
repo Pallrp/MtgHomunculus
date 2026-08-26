@@ -62,16 +62,33 @@ class HashIndex {
   /// leading hypothesis and is untested. Note `dhash_test` proves invariance to
   /// **uniform** brightness scaling only, which says nothing about a ramp.
   ///
-  /// **Raising this is the wrong lever.** At 20 the median is already 2
-  /// candidates and the max is 7; loosening trades missed matches for constant
-  /// Choose Version prompts. Five of the 26 hits sat exactly at 20, so the
-  /// distribution is censored here — some misses are matches just outside.
+  /// ## 20 -> 26 -> 24, and why the calibration above measured the wrong thing
   ///
-  /// Left as-is deliberately. Recall is ~59% but **precision was 100%** across
-  /// the sample, and combined with the OCR path that identifies a card inside
-  /// two frames. A scanner that occasionally waits half a second is fine; one
-  /// that confidently adds the wrong card is not.
-  static const matchThreshold = 20;
+  /// That first pass measured **how far the nearest match was**, never whether
+  /// the nearest match was the right card. Scanning out to 40 showed it usually
+  /// is not: across 21 frames the correct card was never the nearest record.
+  /// Wrong cards sat at 10-22, the right one at 17-27 — bands that overlap
+  /// almost completely, so **no threshold can admit one and exclude the other.**
+  ///
+  /// 26 was tried on 2026-08-26 and reverted the same day. It bought one correct
+  /// match at d=22 that 20 could not reach, and two confident wrong adds at
+  /// d=25 and d=26. Moving the bound only moves the edge, and a lone candidate
+  /// *at* the edge is a marginal record that happened to be least-far — the
+  /// failure follows the threshold wherever it goes.
+  ///
+  /// 24 is the compromise the measurements support:
+  ///
+  /// - the true printing of the scanned Swamp sat at 17-25, inside 24 on 12 of
+  ///   13 frames and inside 20 on only 4
+  /// - both wrong adds seen at 26 were at 25 and 26, excluded outright
+  /// - junk frames are unaffected; their nearest records sat at 30-33
+  ///
+  /// **The threshold is not what makes this safe.** What makes it safe is the
+  /// cross-check in `CardIdentifier`: a hash match the title band disagrees
+  /// with is not trusted, and a lone match contradicted by a printed collector
+  /// number is vetoed. A wider bound is only useful because it puts the right
+  /// row in front of those checks.
+  static const matchThreshold = 24;
 
   /// [dev-tool] How far out to scan **for logging only**, 2026-08-26.
   ///

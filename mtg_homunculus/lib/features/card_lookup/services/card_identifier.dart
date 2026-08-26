@@ -160,16 +160,47 @@ class CardIdentifier {
       ].take(12).toList();
       final cards = [for (final (c, _) in within) c];
 
-      if (cards.isNotEmpty) {
-        final narrowed = _narrowByOcr(cards, ocr);
+      // Cross-check before trusting any of it. A hash match is one opinion; the
+      // title band is an independent second one, and where they disagree the
+      // hash is the one to doubt — it is the signal that goes wrong quietly.
+      final resolvedNames = cards.isEmpty
+          ? const <String>[]
+          : await _resolveNames(ocr, confidentOnly: true);
+      final trusted = _agreeingWithName(cards, resolvedNames);
+
+      if (trusted.isEmpty && cards.isNotEmpty) {
+        AppLogger.d('HASH-VETO: name — band says '
+            '${resolvedNames.join("/")}, hash says '
+            '${cards.map((c) => c.name).toSet().join("/")}');
+      }
+
+      // A lone candidate has nothing to be chosen against, so `_narrowByOcr`
+      // never looks at it. This is the one gap the name cannot cover: a wrong
+      // *printing* of the right card passes the name check by definition.
+      final vetoed = trusted.length == 1 &&
+          ocr.collectorNumber != null &&
+          _collectorContradicts(
+              trusted.single.collectorNumber, ocr.collectorNumber!);
+      if (vetoed) {
+        AppLogger.d('HASH-VETO: collector — card reads '
+            '${ocr.collectorNumber}, sole match is '
+            '${trusted.single.setCode}/${trusted.single.collectorNumber}');
+      }
+
+      if (trusted.isNotEmpty && !vetoed) {
+        final narrowed = _narrowByOcr(trusted, ocr);
         return Identification(
           candidates: narrowed,
-          via: narrowed.length < cards.length
+          via: narrowed.length < trusted.length || trusted.length < cards.length
               ? IdentifiedVia.hashAndOcr
               : IdentifiedVia.hash,
-          // The nearest match that was actually acted on, which since the wide
-          // diagnostic scan is no longer the nearest record found.
-          hashDistance: within.first.$2,
+          // The distance of the nearest match actually acted on. Not the
+          // nearest record found: the scan runs wider than the threshold, and
+          // the cross-check can drop the closest rows.
+          hashDistance: within
+              .firstWhere((e) => e.$1.id == narrowed.first.id,
+                  orElse: () => within.first)
+              .$2,
           ocrText: ocr.raw,
           readCollectorNumber: ocr.collectorNumber,
           readSetCode: ocr.setCode,
@@ -227,6 +258,63 @@ class CardIdentifier {
   }
 
   // ---------------------------------------------------------------------------
+  // Cross-checking
+  // ---------------------------------------------------------------------------
+
+  /// Drop hash candidates the title band disagrees with.
+  ///
+  /// The name and the hash are genuinely independent — one reads text at the top
+  /// of the card, the other measures art across the whole of it — so when they
+  /// disagree, something is wrong. Measured 2026-08-26: of five confident wrong
+  /// adds, three were a hash match for a card with a completely different name
+  /// from the one printed on it, and one of those three had no readable
+  /// collector number at all, so the name was the only thing that could have
+  /// caught it.
+  ///
+  /// Returns [cards] unchanged when the band did not resolve confidently — no
+  /// opinion is not the same as disagreement, and treating it as such would let
+  /// glare veto correct matches.
+  List<Card> _agreeingWithName(List<Card> cards, List<String> resolved) {
+    if (resolved.isEmpty) return cards;
+    return [
+      for (final c in cards)
+        if (resolved.any((n) => _namesAgree(c.name, n))) c,
+    ];
+  }
+
+  /// Equal, or sharing a face.
+  ///
+  /// The database stores a double-faced card as `Front // Back` while a camera
+  /// only ever sees one side, so plain equality would reject every DFC.
+  static bool _namesAgree(String a, String b) {
+    if (a == b) return true;
+    final fa = a.split(' // ');
+    final fb = b.split(' // ');
+    return fa.any(fb.contains);
+  }
+
+  /// Whether a printed collector number contradicts a stored one.
+  ///
+  /// **Blocking only, and only ever consulted for a lone hash candidate.** That
+  /// scoping is what makes the collector number safe to use here at all: it can
+  /// cost a frame, but it has no path to *adding* anything, so a misread number
+  /// cannot produce a confident wrong card the way a scoring bonus can.
+  ///
+  /// The set code is deliberately not consulted. Across every log it reads as
+  /// garbage on most frames — `curr`, `cuir`, `clie`, `ghr`, `xlnen` — and a veto
+  /// on that would block nearly everything.
+  static bool _collectorContradicts(String stored, String read) {
+    // Stored numbers carry suffixes and prefixes a camera never shows: `240a`,
+    // `346★`, `XLN-180`. The digits are the part both sides agree on.
+    final digits = RegExp(r'\d+').firstMatch(stored)?.group(0);
+    if (digits == null) return false;
+    return _stripZeros(digits) != _stripZeros(read);
+  }
+
+  static String _stripZeros(String s) =>
+      s.replaceFirst(RegExp(r'^0+(?=\d)'), '');
+
+  // ---------------------------------------------------------------------------
   // Narrowing
   // ---------------------------------------------------------------------------
 
@@ -271,9 +359,18 @@ class CardIdentifier {
     return score;
   }
 
-  /// Name path: trigram retrieval, then edit-distance rerank, then the same
-  /// scoring on top.
-  Future<List<Card>> _byName(_Ocr ocr) async {
+  /// What the title band says the card is **called**, best first.
+  ///
+  /// Names only — no printings. The cross-check needs nothing else, and loading
+  /// every printing to answer "is this a Swamp?" would mean 849 rows per frame.
+  ///
+  /// [confidentOnly] applies a much tighter cutoff, for callers that will treat
+  /// disagreement as evidence. Garbage OCR still lands within the loose cutoff:
+  /// "RERNENNc" is eight characters from plenty of real names, and the name path
+  /// takes that gladly because a loose match beats nothing. A **veto** cannot,
+  /// because then glare on the title band would start blocking correct matches.
+  Future<List<String>> _resolveNames(_Ocr ocr, {bool confidentOnly = false}) async {
+    if (ocr.name.isEmpty) return const [];
     final names = await _db.nameCandidates(ocr.name);
     if (names.isEmpty) return const [];
 
@@ -285,11 +382,20 @@ class CardIdentifier {
 
     // Anything much worse than the best is not the same card.
     final bestDist = ranked.first.$2;
-    if (bestDist > 12) return const [];
-    final keep = [
+    final cutoff = confidentOnly ? 2 + query.length ~/ 6 : 12;
+    if (bestDist > cutoff) return const [];
+
+    return [
       for (final r in ranked)
         if (r.$2 <= bestDist + 2) r.$1,
-    ].take(4);
+    ].take(4).toList();
+  }
+
+  /// Name path: trigram retrieval, then edit-distance rerank, then the same
+  /// scoring on top.
+  Future<List<Card>> _byName(_Ocr ocr) async {
+    final keep = await _resolveNames(ocr);
+    if (keep.isEmpty) return const [];
 
     final cards = <Card>[];
     for (final n in keep) {
