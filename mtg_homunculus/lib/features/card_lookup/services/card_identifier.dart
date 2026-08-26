@@ -142,11 +142,24 @@ class CardIdentifier {
     // Hash first: it does not care that 8pt text is illegible, and it works the
     // same on full-art, saga and split layouts where text positions move.
     if (hashHits.isNotEmpty) {
-      final cards = <Card>[];
+      // [dev-tool] Resolve everything the wide scan found, log it, then act only
+      // on what is inside the real threshold.
+      final scanned = <(Card, int)>[];
       for (final h in hashHits) {
         final c = await _db.cardById(h.id);
-        if (c != null) cards.add(c);
+        if (c != null) scanned.add((c, h.distance));
       }
+      if (scanned.isNotEmpty) {
+        AppLogger.d('HASH-SCAN: ${scanned.map((e) =>
+            '${e.$1.setCode}/${e.$1.collectorNumber}@${e.$2}').join(' ')}');
+      }
+
+      final within = [
+        for (final e in scanned)
+          if (e.$2 <= HashIndex.matchThreshold) e,
+      ].take(12).toList();
+      final cards = [for (final (c, _) in within) c];
+
       if (cards.isNotEmpty) {
         final narrowed = _narrowByOcr(cards, ocr);
         return Identification(
@@ -154,7 +167,9 @@ class CardIdentifier {
           via: narrowed.length < cards.length
               ? IdentifiedVia.hashAndOcr
               : IdentifiedVia.hash,
-          hashDistance: hashHits.first.distance,
+          // The nearest match that was actually acted on, which since the wide
+          // diagnostic scan is no longer the nearest record found.
+          hashDistance: within.first.$2,
           ocrText: ocr.raw,
           readCollectorNumber: ocr.collectorNumber,
           readSetCode: ocr.setCode,
@@ -195,7 +210,14 @@ class CardIdentifier {
     cv.Mat? gray;
     try {
       gray = cv.cvtColor(card, cv.COLOR_BGR2GRAY);
-      return index.nearest(DHash.compute(gray.data, gray.cols, gray.rows));
+      // Scanned wide, acted on narrow — see [HashIndex.diagnosticThreshold].
+      // The limit must stay above the acted-on limit so filtering this list to
+      // `matchThreshold` gives exactly what a plain `nearest()` would have.
+      return index.nearest(
+        DHash.compute(gray.data, gray.cols, gray.rows),
+        threshold: HashIndex.diagnosticThreshold,
+        limit: 20,
+      );
     } catch (e) {
       AppLogger.w('CardIdentifier: hashing failed: $e');
       return const [];

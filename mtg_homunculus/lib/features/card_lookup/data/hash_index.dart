@@ -73,6 +73,25 @@ class HashIndex {
   /// that confidently adds the wrong card is not.
   static const matchThreshold = 20;
 
+  /// [dev-tool] How far out to scan **for logging only**, 2026-08-26.
+  ///
+  /// Nothing outside [matchThreshold] is ever acted on. This exists because the
+  /// logs could only ever show what was already inside the threshold, which made
+  /// the one question worth asking unanswerable: when a scan matches the wrong
+  /// card, *how far away was the right one?*
+  ///
+  /// Measured that day: a real M21 Swamp was added as M12, and `m21/267` never
+  /// appeared in a hash candidate set at all — so it sat somewhere beyond 20 and
+  /// there was no way to say where. Widening the threshold is the obvious fix
+  /// and cannot be sized without this number.
+  ///
+  /// Free to raise: [nearest] already scans every record, and its per-record
+  /// early-bail means a wider bound only costs the few extra records that
+  /// survive it.
+  ///
+  /// **Delete once the threshold is settled.**
+  static const diagnosticThreshold = 40;
+
   final Uint8List _bytes;
   final int _count;
   final int _headerLen;
