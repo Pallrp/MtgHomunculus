@@ -127,7 +127,8 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
       setName:         card.setName,
       collectorNumber: card.collectorNumber,
     );
-    AppLogger.d('ListingDetailScreen: added "${card.name}" -> $id');
+    AppLogger.d('ListingDetailScreen: added "${card.name}" '
+        '[${card.setCode.toUpperCase()} ${card.collectorNumber}] -> entry $id');
     return id;
   }
 

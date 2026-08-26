@@ -5,15 +5,9 @@ import 'package:mtg_homunculus/features/card_lookup/services/duplicate_guard.dar
 
 /// A fingerprint stated directly, so each test says what the *scan produced*
 /// rather than reconstructing it through the identifier.
-ScanFingerprint fp(
-  String printingId, {
-  String name = 'Swamp',
-  Set<String>? candidates,
-}) =>
-    ScanFingerprint(
-      printingId: printingId,
-      candidateIds: candidates ?? {printingId},
+ScanFingerprint fp(String name, {Set<String>? candidates}) => ScanFingerprint(
       name: name,
+      candidateNames: candidates ?? {name},
     );
 
 Card card(String id, {String name = 'Swamp', String set = 'm21', String num = '267'}) =>
@@ -34,126 +28,155 @@ void main() {
   late DuplicateGuard guard;
   setUp(() => guard = DuplicateGuard());
 
-  group('first scan', () {
+  group('an empty slot', () {
     test('nothing is a duplicate before anything has been added', () {
-      expect(guard.isDuplicate(fp('a')), isFalse);
+      expect(guard.isDuplicate(fp('Swamp')), isFalse);
+    });
+
+    test('a scan that found nothing cannot match', () {
+      guard.remember(fp('Swamp'));
+      expect(
+        guard.isDuplicate(
+          const ScanFingerprint(name: 'Swamp', candidateNames: {}),
+        ),
+        isFalse,
+      );
     });
   });
 
-  group('the printings considered', () {
-    test('the same card held in frame is rejected after the first add', () {
+  group('the card in view', () {
+    test('is rejected for as long as it stays there', () {
       // The loop fires 2-3x/second; without this one card becomes a dozen.
-      guard.remember(fp('a'));
-      expect(guard.isDuplicate(fp('a')), isTrue);
-      expect(guard.isDuplicate(fp('a')), isTrue, reason: 'stays rejected');
+      guard.remember(fp('Swamp'));
+      expect(guard.isDuplicate(fp('Swamp')), isTrue);
+      expect(guard.isDuplicate(fp('Swamp')), isTrue, reason: 'stays rejected');
+    });
+
+    test('is rejected however many printings the frame offered', () {
+      // Nine art-identical Swamps collapse to one name. The path changes
+      // between frames — hash, hashAndOcr, ocr — and the candidate ids change
+      // with it; the name does not.
+      guard.remember(fp('Swamp'));
+      expect(guard.isDuplicate(fp('Swamp', candidates: {'Swamp'})), isTrue);
     });
 
     test('a different card is added', () {
-      guard.remember(fp('a'));
-      expect(guard.isDuplicate(fp('b', name: 'Island')), isFalse);
-    });
-
-    test('the pick from Choose Version is not re-prompted next frame', () {
-      // The regression this exists for. Nine identical-art Swamps: the user
-      // picks the fifth, and the next frame's best candidate is the first
-      // again. Comparing only the chosen printing would call that a new card
-      // and re-open the picker every few hundred milliseconds.
-      final all = {'s1', 's2', 's3', 's4', 's5'};
-      guard.remember(fp('s5', candidates: all));
-      expect(guard.isDuplicate(fp('s1', candidates: all)), isTrue);
-    });
-
-    test('a candidate dropping out between frames is still the same card', () {
-      guard.remember(fp('s1', candidates: {'s1', 's2', 's3'}));
-      expect(guard.isDuplicate(fp('s2', candidates: {'s2', 's3'})), isTrue);
-    });
-
-    test('skipping is remembered, so the picker does not reopen', () {
-      // "Skip" has to mean "keep scanning", not "ask me again immediately".
-      guard.remember(fp('s1', candidates: {'s1', 's2'}));
-      expect(guard.isDuplicate(fp('s1', candidates: {'s1', 's2'})), isTrue);
+      guard.remember(fp('Swamp'));
+      expect(guard.isDuplicate(fp('Gruesome Slaughter')), isFalse);
     });
   });
 
-  group('the name backstop', () {
-    test('disjoint candidates still read as the same card', () async {
-      // dHash and the name search can return completely different candidates
-      // for one physical card — art on one side, text on the other. They still
-      // agree on what it is called.
-      guard.remember(fp('a', candidates: {'a', 'b'}));
-      expect(guard.isDuplicate(fp('x', candidates: {'x', 'y'})), isTrue);
-    });
-
-    test('a different card is still added', () {
-      guard.remember(fp('a', name: 'Swamp'));
-      expect(guard.isDuplicate(fp('b', name: 'Island')), isFalse);
-    });
-
-    test('an empty name cannot match itself into a duplicate', () {
-      guard.remember(fp('a', name: ''));
-      expect(guard.isDuplicate(fp('b', name: '')), isFalse);
-    });
-  });
-
-  group('regression — the misread set code, 2026-08-26', () {
-    test('a re-identified card does not re-prompt when its set misreads', () {
-      // Measured on device. A Swamp was added from a 1-candidate hashAndOcr
-      // match, then a later frame fell through to the name path and returned
-      // four printings all at collector 267 — the set code was what failed.
-      // The added printing is present in that list, so this is the same card;
-      // the old precedence ladder let the misread set veto the match and
-      // re-opened Choose Version on a card already in the list.
-      guard.remember(fp('m21', name: 'Swamp', candidates: {'m21'}));
-
-      final nextFrame = fp('iko',
-          name: 'Swamp', candidates: {'iko', 'snc', 'm21', 'ltr'});
-
-      expect(guard.isDuplicate(nextFrame), isTrue);
-    });
-
-    test('two printings of one card scanned in a row are rejected', () {
-      // The behaviour the old rank 1 existed to prevent, now accepted
-      // deliberately: same-art reprints share candidates and would be rejected
-      // regardless, and adding a second printing goes through Add Version.
-      guard.remember(fp('m21', name: 'Swamp', candidates: {'m21'}));
+  group('every candidate must match', () {
+    test('a frame that could not separate two cards is not discarded', () {
+      // "Swamp" and "Swamp Mosquito" are different cards. Discarding this frame
+      // because one of them is the card just added would hide a real miss.
+      guard.remember(fp('Swamp'));
       expect(
-        guard.isDuplicate(fp('lci', name: 'Swamp', candidates: {'lci'})),
-        isTrue,
+        guard.isDuplicate(fp('Swamp', candidates: {'Swamp', 'Swamp Mosquito'})),
+        isFalse,
       );
+    });
+
+    test('matching is exact, never a prefix', () {
+      guard.remember(fp('Swamp'));
+      expect(guard.isDuplicate(fp('Swamp Mosquito')), isFalse);
+    });
+
+    test('and never a substring the other way', () {
+      guard.remember(fp('Swamp Mosquito'));
+      expect(guard.isDuplicate(fp('Swamp')), isFalse);
     });
   });
 
-  group('reset', () {
-    test('a second copy scanned after leaving the camera is added', () {
-      guard.remember(fp('a'));
-      guard.reset();
-      expect(guard.isDuplicate(fp('a')), isFalse);
-    });
-  });
-
-  group('ScanFingerprint.of', () {
-    test('records the user pick plus every candidate considered', () {
-      final chosen = card('s5');
-      final id = Identification(
-        candidates: [card('s1'), card('s2'), chosen],
-        via: IdentifiedVia.hash,
-      );
-      final f = ScanFingerprint.of(id, chosen);
-      expect(f.printingId, 's5');
-      expect(f.candidateIds, {'s1', 's2', 's5'});
-      expect(f.name, 'Swamp');
-    });
-
-    test('the pick is included even when it is not among the candidates', () {
-      // Choose Version can widen to every printing of the name, so the row the
-      // user picks need not be one the scan originally offered.
-      final chosen = card('other', name: 'Swamp');
+  group('Choose Version', () {
+    test('the pick alone arms the slot, not the printings offered', () {
+      // Choosing one Swamp out of nine says something about that card, not
+      // about the other eight.
       final id = Identification(
         candidates: [card('s1'), card('s2')],
         via: IdentifiedVia.hash,
       );
-      expect(ScanFingerprint.of(id, chosen).candidateIds,
-          {'s1', 's2', 'other'});
+      guard.remember(ScanFingerprint.of(id, card('s2')));
+      expect(guard.lastName, 'Swamp');
+    });
+
+    test('skipping arms the slot too, so the picker does not reopen', () {
+      // "Skip" has to mean "keep scanning", not "ask me again in 300ms".
+      guard.remember(fp('Swamp'));
+      expect(guard.isDuplicate(fp('Swamp')), isTrue);
+    });
+  });
+
+  group('regression — re-added on every frame, 2026-08-26', () {
+    test('the path changing between frames does not re-add the card', () {
+      // Measured on device. One motionless Swamp, alternating between
+      // hashAndOcr (1 candidate) and hash (8-12 candidates) frames. Every
+      // earlier design compared something finer than the name, and the frames
+      // disagreed with each other about a card that had not moved.
+      guard.remember(fp('Swamp'));
+
+      for (final frame in [
+        fp('Swamp'), // hashAndOcr, 1 candidate
+        fp('Swamp', candidates: {'Swamp'}), // hash, 8 candidates
+        fp('Swamp', candidates: {'Swamp'}), // hash, 4 candidates
+        fp('Swamp'), // hashAndOcr, 1 candidate
+      ]) {
+        expect(guard.isDuplicate(frame), isTrue,
+            reason: 'no frame of a motionless card may re-add it');
+      }
+    });
+  });
+
+  group('the slot holds only the last card', () {
+    test('A then B then A adds A again', () {
+      // Deliberate. The user may own two copies, and undoing one row is cheaper
+      // than silently dropping a real card.
+      guard.remember(fp('Swamp'));
+      expect(guard.isDuplicate(fp('Gruesome Slaughter')), isFalse);
+      guard.remember(fp('Gruesome Slaughter'));
+      expect(guard.isDuplicate(fp('Swamp')), isFalse);
+    });
+  });
+
+  group('reset', () {
+    test('clears the slot', () {
+      guard.remember(fp('Swamp'));
+      guard.reset();
+      expect(guard.lastName, isNull);
+      expect(guard.isDuplicate(fp('Swamp')), isFalse);
+    });
+  });
+
+  group('ScanFingerprint.of', () {
+    test('takes its name from the resolved row, not from OCR', () {
+      final chosen = card('s5');
+      final id = Identification(
+        candidates: [card('s1'), chosen],
+        via: IdentifiedVia.hash,
+        ocrText: 'SVVAMP',
+      );
+      expect(ScanFingerprint.of(id, chosen).name, 'Swamp');
+    });
+
+    test('collapses reprints of one card to a single name', () {
+      final id = Identification(
+        candidates: [
+          card('s1'),
+          card('s2', set: 'lci', num: '285'),
+          card('s3', set: 'iko', num: '267'),
+        ],
+        via: IdentifiedVia.hash,
+      );
+      expect(ScanFingerprint.of(id, card('s1')).candidateNames, {'Swamp'});
+    });
+
+    test('keeps two names apart when the scan could not decide', () {
+      final id = Identification(
+        candidates: [card('s1'), card('m1', name: 'Swamp Mosquito')],
+        via: IdentifiedVia.ocr,
+      );
+      expect(ScanFingerprint.of(id, card('s1')).candidateNames,
+          {'Swamp', 'Swamp Mosquito'});
     });
   });
 }

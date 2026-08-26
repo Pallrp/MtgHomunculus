@@ -65,10 +65,15 @@ class ScanPipeline {
   }) async {
     final id = await identifier.identify(frame, border);
 
+    // The printing is logged, not just the name: when a scan lands on the wrong
+    // reprint, which one it picked is the whole diagnosis, and a bare name
+    // cannot tell m21/267 from m20/270.
     AppLogger.d('ScanPipeline: ${id.via.name}'
         '${id.hashDistance == null ? "" : " d=${id.hashDistance}"}'
         '  ${id.candidates.length} candidate(s)'
-        '${id.best == null ? "" : "  ${id.best!.name}"}');
+        '${id.best == null ? "" : "  ${id.best!.name}"
+            " [${id.best!.setCode.toUpperCase()} ${id.best!.collectorNumber}]"}'
+        '${id.readCollectorNumber == null && id.readSetCode == null ? "" : "  read=${id.readSetCode ?? "?"}/${id.readCollectorNumber ?? "?"}"}');
 
     var best = id.best;
     if (best == null) return FailedResult(border, id.ocrText);

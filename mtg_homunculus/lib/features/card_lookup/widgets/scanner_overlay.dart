@@ -286,6 +286,9 @@ class ScannerOverlayState extends State<ScannerOverlay> {
 
   @override
   void dispose() {
+    // Leaving the scanner is what ends a scanning session, so this is where the
+    // card last added stops being suppressed.
+    _guard.reset();
     _recognizer?.close();
     _identifier?.dispose();
     _cardsDb?.close();
@@ -546,10 +549,11 @@ class ScannerOverlayState extends State<ScannerOverlay> {
   }
 
   void _stopStream() {
-    // Stopping is the user leaving the camera — opening the sheet, backing out.
-    // Coming back is a new scan, so the card they last added must be addable
-    // again; otherwise a second copy of it disappears with no feedback at all.
-    _guard.reset();
+    // The duplicate slot is deliberately NOT cleared here. Expanding the list
+    // sheet stops the stream, and someone checking what they have collected has
+    // not told the scanner that the card in their hand is a different one —
+    // clearing here re-arms the card still in view and re-adds it on the next
+    // frame. The slot clears on dispose, i.e. on leaving the scanner.
     _idleFired = false;
     _lastDetectionAt = DateTime.now();
     if (_controller?.value.isStreamingImages != true) return;
@@ -661,7 +665,9 @@ class ScannerOverlayState extends State<ScannerOverlay> {
           // A duplicate is the loop working, not an outcome: it must not flash,
           // and it must not replace the chip for the card actually added.
           if (result is DuplicateResult) {
-            AppLogger.d('Capture: duplicate — ${result.card.name}');
+            AppLogger.d('Capture: duplicate — ${result.card.name} '
+                '[${result.card.setCode.toUpperCase()} '
+                '${result.card.collectorNumber}]');
             return;
           }
           _flash(result is MatchedResult ? Colors.greenAccent : Colors.redAccent);
