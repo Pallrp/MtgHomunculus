@@ -10,12 +10,12 @@ import '../data/collection_database.dart';
 /// platform share sheet.
 ///
 /// Columns (in order):
-///   Name, Set Code, Collector Number, Finish, Language, Condition, Quantity
+///   Name, Set Name, Set Code, Collector Number, Finish, Language, Condition,
+///   Quantity
 ///
-/// **Prices and set names are gone**, and deliberately. Both used to come from a
-/// live Scryfall response held in memory; the local store keeps neither — prices
-/// change daily and were dropped from the schema on purpose, and an entry's
-/// snapshot carries the set *code* because that is what identifies a printing.
+/// **Prices are gone, and deliberately.** They came from a live Scryfall
+/// response held in memory; the local store drops them on purpose because they
+/// change daily, and an export is not where anyone should be reading a price.
 ///
 /// RFC 4180 rules applied:
 ///   - Lines separated by CRLF.
@@ -28,6 +28,7 @@ class CsvExporter {
 
   static const _headers = [
     'Name',
+    'Set Name',
     'Set Code',
     'Collector Number',
     'Finish',
@@ -51,6 +52,7 @@ class CsvExporter {
       for (final e in entries)
         _row([
           e.snapName,
+          e.snapSetName,
           e.snapSetCode.toUpperCase(),
           e.snapCollector,
           Finish.label(e.finish),

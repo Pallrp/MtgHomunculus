@@ -521,6 +521,18 @@ class $EntriesTable extends Entries with TableInfo<$EntriesTable, Entry> {
     type: DriftSqlType.string,
     requiredDuringInsert: true,
   );
+  static const VerificationMeta _snapSetNameMeta = const VerificationMeta(
+    'snapSetName',
+  );
+  @override
+  late final GeneratedColumn<String> snapSetName = GeneratedColumn<String>(
+    'snap_set_name',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(''),
+  );
   static const VerificationMeta _snapCollectorMeta = const VerificationMeta(
     'snapCollector',
   );
@@ -544,6 +556,7 @@ class $EntriesTable extends Entries with TableInfo<$EntriesTable, Entry> {
     addedAt,
     snapName,
     snapSetCode,
+    snapSetName,
     snapCollector,
   ];
   @override
@@ -636,6 +649,15 @@ class $EntriesTable extends Entries with TableInfo<$EntriesTable, Entry> {
     } else if (isInserting) {
       context.missing(_snapSetCodeMeta);
     }
+    if (data.containsKey('snap_set_name')) {
+      context.handle(
+        _snapSetNameMeta,
+        snapSetName.isAcceptableOrUnknown(
+          data['snap_set_name']!,
+          _snapSetNameMeta,
+        ),
+      );
+    }
     if (data.containsKey('snap_collector')) {
       context.handle(
         _snapCollectorMeta,
@@ -700,6 +722,10 @@ class $EntriesTable extends Entries with TableInfo<$EntriesTable, Entry> {
         DriftSqlType.string,
         data['${effectivePrefix}snap_set_code'],
       )!,
+      snapSetName: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}snap_set_name'],
+      )!,
       snapCollector: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}snap_collector'],
@@ -732,6 +758,16 @@ class Entry extends DataClass implements Insertable<Entry> {
   final int addedAt;
   final String snapName;
   final String snapSetCode;
+
+  /// The set's full name, stored rather than joined.
+  ///
+  /// It is display data with no identifying role — [snapSetCode] is what names
+  /// the printing — so keeping it here rather than looking it up in `cards.db`
+  /// is what lets an export and a row render with the card cache absent, which
+  /// is the entire point of the snapshot. Stale if Scryfall ever renames a set,
+  /// and that is correct: this records what the card was called when it was
+  /// added, it is not a cache to keep fresh.
+  final String snapSetName;
   final String snapCollector;
   const Entry({
     required this.id,
@@ -744,6 +780,7 @@ class Entry extends DataClass implements Insertable<Entry> {
     required this.addedAt,
     required this.snapName,
     required this.snapSetCode,
+    required this.snapSetName,
     required this.snapCollector,
   });
   @override
@@ -759,6 +796,7 @@ class Entry extends DataClass implements Insertable<Entry> {
     map['added_at'] = Variable<int>(addedAt);
     map['snap_name'] = Variable<String>(snapName);
     map['snap_set_code'] = Variable<String>(snapSetCode);
+    map['snap_set_name'] = Variable<String>(snapSetName);
     map['snap_collector'] = Variable<String>(snapCollector);
     return map;
   }
@@ -775,6 +813,7 @@ class Entry extends DataClass implements Insertable<Entry> {
       addedAt: Value(addedAt),
       snapName: Value(snapName),
       snapSetCode: Value(snapSetCode),
+      snapSetName: Value(snapSetName),
       snapCollector: Value(snapCollector),
     );
   }
@@ -795,6 +834,7 @@ class Entry extends DataClass implements Insertable<Entry> {
       addedAt: serializer.fromJson<int>(json['addedAt']),
       snapName: serializer.fromJson<String>(json['snapName']),
       snapSetCode: serializer.fromJson<String>(json['snapSetCode']),
+      snapSetName: serializer.fromJson<String>(json['snapSetName']),
       snapCollector: serializer.fromJson<String>(json['snapCollector']),
     );
   }
@@ -812,6 +852,7 @@ class Entry extends DataClass implements Insertable<Entry> {
       'addedAt': serializer.toJson<int>(addedAt),
       'snapName': serializer.toJson<String>(snapName),
       'snapSetCode': serializer.toJson<String>(snapSetCode),
+      'snapSetName': serializer.toJson<String>(snapSetName),
       'snapCollector': serializer.toJson<String>(snapCollector),
     };
   }
@@ -827,6 +868,7 @@ class Entry extends DataClass implements Insertable<Entry> {
     int? addedAt,
     String? snapName,
     String? snapSetCode,
+    String? snapSetName,
     String? snapCollector,
   }) => Entry(
     id: id ?? this.id,
@@ -839,6 +881,7 @@ class Entry extends DataClass implements Insertable<Entry> {
     addedAt: addedAt ?? this.addedAt,
     snapName: snapName ?? this.snapName,
     snapSetCode: snapSetCode ?? this.snapSetCode,
+    snapSetName: snapSetName ?? this.snapSetName,
     snapCollector: snapCollector ?? this.snapCollector,
   );
   Entry copyWithCompanion(EntriesCompanion data) {
@@ -855,6 +898,9 @@ class Entry extends DataClass implements Insertable<Entry> {
       snapSetCode: data.snapSetCode.present
           ? data.snapSetCode.value
           : this.snapSetCode,
+      snapSetName: data.snapSetName.present
+          ? data.snapSetName.value
+          : this.snapSetName,
       snapCollector: data.snapCollector.present
           ? data.snapCollector.value
           : this.snapCollector,
@@ -874,6 +920,7 @@ class Entry extends DataClass implements Insertable<Entry> {
           ..write('addedAt: $addedAt, ')
           ..write('snapName: $snapName, ')
           ..write('snapSetCode: $snapSetCode, ')
+          ..write('snapSetName: $snapSetName, ')
           ..write('snapCollector: $snapCollector')
           ..write(')'))
         .toString();
@@ -891,6 +938,7 @@ class Entry extends DataClass implements Insertable<Entry> {
     addedAt,
     snapName,
     snapSetCode,
+    snapSetName,
     snapCollector,
   );
   @override
@@ -907,6 +955,7 @@ class Entry extends DataClass implements Insertable<Entry> {
           other.addedAt == this.addedAt &&
           other.snapName == this.snapName &&
           other.snapSetCode == this.snapSetCode &&
+          other.snapSetName == this.snapSetName &&
           other.snapCollector == this.snapCollector);
 }
 
@@ -921,6 +970,7 @@ class EntriesCompanion extends UpdateCompanion<Entry> {
   final Value<int> addedAt;
   final Value<String> snapName;
   final Value<String> snapSetCode;
+  final Value<String> snapSetName;
   final Value<String> snapCollector;
   const EntriesCompanion({
     this.id = const Value.absent(),
@@ -933,6 +983,7 @@ class EntriesCompanion extends UpdateCompanion<Entry> {
     this.addedAt = const Value.absent(),
     this.snapName = const Value.absent(),
     this.snapSetCode = const Value.absent(),
+    this.snapSetName = const Value.absent(),
     this.snapCollector = const Value.absent(),
   });
   EntriesCompanion.insert({
@@ -946,6 +997,7 @@ class EntriesCompanion extends UpdateCompanion<Entry> {
     required int addedAt,
     required String snapName,
     required String snapSetCode,
+    this.snapSetName = const Value.absent(),
     required String snapCollector,
   }) : listId = Value(listId),
        cardId = Value(cardId),
@@ -968,6 +1020,7 @@ class EntriesCompanion extends UpdateCompanion<Entry> {
     Expression<int>? addedAt,
     Expression<String>? snapName,
     Expression<String>? snapSetCode,
+    Expression<String>? snapSetName,
     Expression<String>? snapCollector,
   }) {
     return RawValuesInsertable({
@@ -981,6 +1034,7 @@ class EntriesCompanion extends UpdateCompanion<Entry> {
       if (addedAt != null) 'added_at': addedAt,
       if (snapName != null) 'snap_name': snapName,
       if (snapSetCode != null) 'snap_set_code': snapSetCode,
+      if (snapSetName != null) 'snap_set_name': snapSetName,
       if (snapCollector != null) 'snap_collector': snapCollector,
     });
   }
@@ -996,6 +1050,7 @@ class EntriesCompanion extends UpdateCompanion<Entry> {
     Value<int>? addedAt,
     Value<String>? snapName,
     Value<String>? snapSetCode,
+    Value<String>? snapSetName,
     Value<String>? snapCollector,
   }) {
     return EntriesCompanion(
@@ -1009,6 +1064,7 @@ class EntriesCompanion extends UpdateCompanion<Entry> {
       addedAt: addedAt ?? this.addedAt,
       snapName: snapName ?? this.snapName,
       snapSetCode: snapSetCode ?? this.snapSetCode,
+      snapSetName: snapSetName ?? this.snapSetName,
       snapCollector: snapCollector ?? this.snapCollector,
     );
   }
@@ -1046,6 +1102,9 @@ class EntriesCompanion extends UpdateCompanion<Entry> {
     if (snapSetCode.present) {
       map['snap_set_code'] = Variable<String>(snapSetCode.value);
     }
+    if (snapSetName.present) {
+      map['snap_set_name'] = Variable<String>(snapSetName.value);
+    }
     if (snapCollector.present) {
       map['snap_collector'] = Variable<String>(snapCollector.value);
     }
@@ -1065,6 +1124,7 @@ class EntriesCompanion extends UpdateCompanion<Entry> {
           ..write('addedAt: $addedAt, ')
           ..write('snapName: $snapName, ')
           ..write('snapSetCode: $snapSetCode, ')
+          ..write('snapSetName: $snapSetName, ')
           ..write('snapCollector: $snapCollector')
           ..write(')'))
         .toString();
@@ -1413,6 +1473,7 @@ typedef $$EntriesTableCreateCompanionBuilder =
       required int addedAt,
       required String snapName,
       required String snapSetCode,
+      Value<String> snapSetName,
       required String snapCollector,
     });
 typedef $$EntriesTableUpdateCompanionBuilder =
@@ -1427,6 +1488,7 @@ typedef $$EntriesTableUpdateCompanionBuilder =
       Value<int> addedAt,
       Value<String> snapName,
       Value<String> snapSetCode,
+      Value<String> snapSetName,
       Value<String> snapCollector,
     });
 
@@ -1503,6 +1565,11 @@ class $$EntriesTableFilterComposer
 
   ColumnFilters<String> get snapSetCode => $composableBuilder(
     column: $table.snapSetCode,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get snapSetName => $composableBuilder(
+    column: $table.snapSetName,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -1589,6 +1656,11 @@ class $$EntriesTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get snapSetName => $composableBuilder(
+    column: $table.snapSetName,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<String> get snapCollector => $composableBuilder(
     column: $table.snapCollector,
     builder: (column) => ColumnOrderings(column),
@@ -1653,6 +1725,11 @@ class $$EntriesTableAnnotationComposer
 
   GeneratedColumn<String> get snapSetCode => $composableBuilder(
     column: $table.snapSetCode,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get snapSetName => $composableBuilder(
+    column: $table.snapSetName,
     builder: (column) => column,
   );
 
@@ -1723,6 +1800,7 @@ class $$EntriesTableTableManager
                 Value<int> addedAt = const Value.absent(),
                 Value<String> snapName = const Value.absent(),
                 Value<String> snapSetCode = const Value.absent(),
+                Value<String> snapSetName = const Value.absent(),
                 Value<String> snapCollector = const Value.absent(),
               }) => EntriesCompanion(
                 id: id,
@@ -1735,6 +1813,7 @@ class $$EntriesTableTableManager
                 addedAt: addedAt,
                 snapName: snapName,
                 snapSetCode: snapSetCode,
+                snapSetName: snapSetName,
                 snapCollector: snapCollector,
               ),
           createCompanionCallback:
@@ -1749,6 +1828,7 @@ class $$EntriesTableTableManager
                 required int addedAt,
                 required String snapName,
                 required String snapSetCode,
+                Value<String> snapSetName = const Value.absent(),
                 required String snapCollector,
               }) => EntriesCompanion.insert(
                 id: id,
@@ -1761,6 +1841,7 @@ class $$EntriesTableTableManager
                 addedAt: addedAt,
                 snapName: snapName,
                 snapSetCode: snapSetCode,
+                snapSetName: snapSetName,
                 snapCollector: snapCollector,
               ),
           withReferenceMapper: (p0) => p0

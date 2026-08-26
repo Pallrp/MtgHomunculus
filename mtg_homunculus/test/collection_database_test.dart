@@ -13,6 +13,7 @@ void main() {
     String cardId = 'c1',
     String name = 'Swamp',
     String set = 'm21',
+    String setName = 'Core Set 2021',
     String num = '267',
     int finish = VariantDefaults.finish,
     String language = VariantDefaults.language,
@@ -24,6 +25,7 @@ void main() {
         cardId: cardId,
         name: name,
         setCode: set,
+        setName: setName,
         collectorNumber: num,
         finish: finish,
         language: language,
@@ -167,6 +169,119 @@ void main() {
       expect(row.cardId, 'c2');
       expect(row.snapName, 'Island');
       expect(row.snapCollector, '286');
+    });
+  });
+
+  group('the variant editor rewrite', () {
+    late int listId;
+    setUp(() async => listId = (await db.ensureDefaultList()).id);
+
+    Future<void> apply(List<VariantEdit> wanted) => db.setVariantsFor(
+          listId: listId,
+          cardId: 'c1',
+          wanted: wanted,
+          name: 'Swamp',
+          setCode: 'm21',
+          setName: 'Core Set 2021',
+          collectorNumber: '267',
+        );
+
+    test('the editor prepopulates from what the list already holds', () async {
+      await add(listId, quantity: 4);
+      await add(listId, finish: Finish.foil, quantity: 2);
+
+      final existing = await db.entriesForCard(listId, 'c1');
+      final prefill = existing.map(VariantEdit.of).toList();
+
+      expect(prefill, hasLength(2));
+      expect(prefill.map((v) => v.finish), containsAll([Finish.nonfoil, Finish.foil]));
+      expect(prefill.map((v) => v.quantity), containsAll([4, 2]));
+    });
+
+    test('applying an unchanged prefill changes nothing', () async {
+      // The test that matters: open the editor, touch nothing, apply. If
+      // quantities were not carried through, four copies would silently
+      // become one.
+      await add(listId, quantity: 4);
+      await add(listId, finish: Finish.foil, quantity: 2);
+      final before = await db.entriesForCard(listId, 'c1');
+
+      await apply(before.map(VariantEdit.of).toList());
+
+      final after = await db.entriesForCard(listId, 'c1');
+      expect(after, hasLength(2));
+      expect(after.map((e) => e.quantity).toList()..sort(), [2, 4]);
+    });
+
+    test('a cleared variant is removed', () async {
+      await add(listId, quantity: 4);
+      await add(listId, finish: Finish.foil, quantity: 2);
+
+      await apply([const VariantEdit(finish: Finish.nonfoil)]);
+
+      final rows = await db.entriesForCard(listId, 'c1');
+      expect(rows, hasLength(1));
+      expect(rows.single.finish, Finish.nonfoil);
+    });
+
+    test('an added variant is appended', () async {
+      await add(listId, quantity: 4);
+
+      await apply([
+        const VariantEdit(finish: Finish.nonfoil),
+        const VariantEdit(finish: Finish.etched, quantity: 3),
+      ]);
+
+      final rows = await db.entriesForCard(listId, 'c1');
+      expect(rows, hasLength(2));
+      expect(rows.firstWhere((e) => e.finish == Finish.etched).quantity, 3);
+    });
+
+    test('a surviving variant keeps its place in scan order', () async {
+      // added_at drives the "Scanned" sort. Rewriting the set must not shuffle
+      // a row the user did not touch to the top.
+      final id = await add(listId, quantity: 4);
+      final original = (await db.entryById(id))!.addedAt;
+
+      await apply([
+        const VariantEdit(finish: Finish.nonfoil),
+        const VariantEdit(finish: Finish.foil),
+      ]);
+
+      final kept = (await db.entriesForCard(listId, 'c1'))
+          .firstWhere((e) => e.finish == Finish.nonfoil);
+      expect(kept.id, id, reason: 'the same row, not a delete and re-add');
+      expect(kept.addedAt, original);
+    });
+
+    test('an explicit quantity is written', () async {
+      await add(listId, quantity: 4);
+      await apply([const VariantEdit(finish: Finish.nonfoil, quantity: 9)]);
+      expect((await db.entriesForCard(listId, 'c1')).single.quantity, 9);
+    });
+
+    test('clearing every variant empties the card from the list', () async {
+      await add(listId, quantity: 4);
+      await add(listId, finish: Finish.foil);
+      await apply(const []);
+      expect(await db.entriesForCard(listId, 'c1'), isEmpty);
+    });
+
+    test('other cards in the list are untouched', () async {
+      await add(listId);
+      await add(listId, cardId: 'c2', name: 'Island');
+      await apply(const []);
+      final left = await db.entriesIn(listId);
+      expect(left, hasLength(1));
+      expect(left.single.cardId, 'c2');
+    });
+  });
+
+  group('the snapshot', () {
+    test('carries the set name so an export needs no cards.db', () async {
+      final l = (await db.ensureDefaultList()).id;
+      await add(l);
+      expect((await db.entriesIn(l)).single.snapSetName, 'Core Set 2021');
     });
   });
 

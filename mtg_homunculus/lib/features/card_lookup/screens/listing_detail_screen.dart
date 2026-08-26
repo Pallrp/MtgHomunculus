@@ -124,6 +124,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
       cardId:          card.scryfallId,
       name:            card.name,
       setCode:         card.setCode,
+      setName:         card.setName,
       collectorNumber: card.collectorNumber,
     );
     AppLogger.d('ListingDetailScreen: added "${card.name}" -> $id');
@@ -146,6 +147,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
       cardId:          newPrinting.scryfallId,
       name:            newPrinting.name,
       setCode:         newPrinting.setCode,
+      setName:         newPrinting.setName,
       collectorNumber: newPrinting.collectorNumber,
       finish:          isFoil ? Finish.foil : Finish.nonfoil,
     );
@@ -164,7 +166,9 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
         id:              e.cardId,
         name:            e.snapName,
         setCode:         e.snapSetCode,
-        setName:         e.snapSetCode.toUpperCase(),
+        setName:         e.snapSetName.isEmpty
+            ? e.snapSetCode.toUpperCase()
+            : e.snapSetName,
         collectorNumber: e.snapCollector,
         finishes:        e.finish,
       );

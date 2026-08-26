@@ -67,6 +67,39 @@ abstract final class VariantDefaults {
   static const condition = Condition.nearMint;
 }
 
+/// One row of the variant editor — a variant the list should end up holding.
+///
+/// The editor opens showing the variants already in the list, so what it hands
+/// back is the **desired final state**, not a list of changes. See
+/// [CollectionDatabase.setVariantsFor].
+class VariantEdit {
+  final int finish;
+  final String language;
+  final int condition;
+
+  /// Null means "leave whatever this variant already had".
+  ///
+  /// The distinction matters: the editor is about *which* variants exist, and
+  /// opening it to add a foil must not silently reset the nonfoil row's count of
+  /// four back to one.
+  final int? quantity;
+
+  const VariantEdit({
+    this.finish = VariantDefaults.finish,
+    this.language = VariantDefaults.language,
+    this.condition = VariantDefaults.condition,
+    this.quantity,
+  });
+
+  /// The variant an existing entry represents, for prepopulating the editor.
+  factory VariantEdit.of(Entry e) => VariantEdit(
+        finish: e.finish,
+        language: e.language,
+        condition: e.condition,
+        quantity: e.quantity,
+      );
+}
+
 // ---------------------------------------------------------------------------
 // Tables
 // ---------------------------------------------------------------------------
@@ -121,6 +154,17 @@ class Entries extends Table {
   // fresh: it is what the card was called when it was added.
   TextColumn get snapName => text()();
   TextColumn get snapSetCode => text()();
+
+  /// The set's full name, stored rather than joined.
+  ///
+  /// It is display data with no identifying role — [snapSetCode] is what names
+  /// the printing — so keeping it here rather than looking it up in `cards.db`
+  /// is what lets an export and a row render with the card cache absent, which
+  /// is the entire point of the snapshot. Stale if Scryfall ever renames a set,
+  /// and that is correct: this records what the card was called when it was
+  /// added, it is not a cache to keep fresh.
+  TextColumn get snapSetName => text().withDefault(const Constant(''))();
+
   TextColumn get snapCollector => text()();
 
   @override
@@ -264,6 +308,7 @@ class CollectionDatabase extends _$CollectionDatabase {
     required String name,
     required String setCode,
     required String collectorNumber,
+    String setName = '',
     int finish = VariantDefaults.finish,
     String language = VariantDefaults.language,
     int condition = VariantDefaults.condition,
@@ -295,6 +340,7 @@ class CollectionDatabase extends _$CollectionDatabase {
         addedAt: _now(),
         snapName: name,
         snapSetCode: setCode,
+        snapSetName: Value(setName),
         snapCollector: collectorNumber,
       ));
     }
@@ -350,6 +396,7 @@ class CollectionDatabase extends _$CollectionDatabase {
     String? cardId,
     String? name,
     String? setCode,
+    String? setName,
     String? collectorNumber,
     int? finish,
     String? language,
@@ -392,6 +439,7 @@ class CollectionDatabase extends _$CollectionDatabase {
         condition: Value(target.condition),
         snapName: name == null ? const Value.absent() : Value(name),
         snapSetCode: setCode == null ? const Value.absent() : Value(setCode),
+        snapSetName: setName == null ? const Value.absent() : Value(setName),
         snapCollector: collectorNumber == null
             ? const Value.absent()
             : Value(collectorNumber),
@@ -423,6 +471,7 @@ class CollectionDatabase extends _$CollectionDatabase {
           cardId: row.cardId,
           name: row.snapName,
           setCode: row.snapSetCode,
+          setName: row.snapSetName,
           collectorNumber: row.snapCollector,
           finish: row.finish,
           language: row.language,
@@ -467,11 +516,76 @@ class CollectionDatabase extends _$CollectionDatabase {
     };
   }
 
-  /// Which printings of [cardId] are already in [listId], for the picker's badge.
+  /// Which printings of [cardId] are already in [listId], for the picker's badge
+  /// and for opening the variant editor prepopulated.
   Future<List<Entry>> entriesForCard(int listId, String cardId) =>
       (select(entries)
             ..where((e) => e.listId.equals(listId) & e.cardId.equals(cardId)))
           .get();
+
+  /// Replace every variant of [cardId] in [listId] with exactly [wanted].
+  ///
+  /// The variant editor opens prepopulated with what the list already holds, so
+  /// applying it is a **rewrite, not a diff the caller has to compute**: a
+  /// variant the user cleared is gone, one they added is appended, and one they
+  /// left alone keeps its `added_at` and therefore its place in scan order.
+  ///
+  /// Quantities are only written where [VariantEdit.quantity] says so — an
+  /// untouched variant keeps the count it had, which is what makes "open the
+  /// editor, change nothing, apply" a genuine no-op rather than a silent reset
+  /// to one.
+  ///
+  /// Runs in one transaction: a half-applied variant set is a state the user
+  /// never asked for and cannot easily recognise.
+  Future<void> setVariantsFor({
+    required int listId,
+    required String cardId,
+    required List<VariantEdit> wanted,
+    required String name,
+    required String setCode,
+    required String collectorNumber,
+    String setName = '',
+  }) async {
+    await transaction(() async {
+      final existing = await entriesForCard(listId, cardId);
+      final byKey = {
+        for (final e in existing) (e.finish, e.language, e.condition): e,
+      };
+
+      final keep = <int>{};
+      for (final w in wanted) {
+        final key = (w.finish, w.language, w.condition);
+        final row = byKey[key];
+        if (row == null) {
+          await addCard(
+            listId: listId,
+            cardId: cardId,
+            name: name,
+            setCode: setCode,
+            setName: setName,
+            collectorNumber: collectorNumber,
+            finish: w.finish,
+            language: w.language,
+            condition: w.condition,
+            quantity: w.quantity ?? 1,
+          );
+          continue;
+        }
+        keep.add(row.id);
+        if (w.quantity != null && w.quantity != row.quantity) {
+          await (update(entries)..where((e) => e.id.equals(row.id)))
+              .write(EntriesCompanion(quantity: Value(w.quantity!)));
+        }
+      }
+
+      for (final e in existing) {
+        if (!keep.contains(e.id)) {
+          await (delete(entries)..where((r) => r.id.equals(e.id))).go();
+        }
+      }
+      await _touch(listId);
+    });
+  }
 
   // ---------------------------------------------------------------------------
 

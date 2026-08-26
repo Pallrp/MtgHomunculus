@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../data/collection_database.dart';
-import '../data/listing_import.dart';
 import 'listing_detail_screen.dart';
 import 'quick_scan_screen.dart';
 
@@ -47,10 +46,6 @@ class _ListingHomeScreenState extends State<ListingHomeScreen> {
   }
 
   Future<void> _load() async {
-    // Carries any pre-collection.db JSON listings across. A no-op on every run
-    // but the first, and on a fresh install.
-    await ListingImport.run(_db);
-
     final listings = await _db.allLists();
     final counts   = await _db.countsForAll();
     if (mounted) {
