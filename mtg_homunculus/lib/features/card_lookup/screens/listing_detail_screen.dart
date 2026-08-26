@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 
 import '../../../core/logging/app_logger.dart';
 import '../data/collection_database.dart';
+import '../models/scan_defaults.dart';
 import '../models/scryfall_card.dart';
+import '../widgets/attribute_chips.dart';
 import '../services/csv_exporter.dart';
 import '../widgets/printing_browser_sheet.dart';
 import '../widgets/scanner_overlay.dart' show ScannerOverlay, ScannerOverlayState, CaptureButton;
@@ -119,6 +121,10 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
   /// further copy of that same variant increments rather than adding a row.
   /// Returns the entry id of the created or incremented row.
   Future<int> _onCardAdded(ScryfallCard card) async {
+    // A scan cannot see finish, language or condition, so the user's defaults
+    // are what it lands on — `finishFor` keeps a nonfoil default off a printing
+    // that was never made nonfoil.
+    final d = ScanDefaults.current;
     final id = await _db.addCard(
       listId:          widget.listId,
       cardId:          card.scryfallId,
@@ -126,6 +132,12 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
       setCode:         card.setCode,
       setName:         card.setName,
       collectorNumber: card.collectorNumber,
+      finish:          d.finishFor(
+        (card.nonFoilAvailable ? Finish.nonfoil : 0) |
+            (card.foilAvailable ? Finish.foil : 0),
+      ),
+      language:        d.language,
+      condition:       d.condition,
     );
     AppLogger.d('ListingDetailScreen: added "${card.name}" '
         '[${card.setCode.toUpperCase()} ${card.collectorNumber}] -> entry $id');
@@ -551,25 +563,10 @@ class _ListingCardRow extends StatelessWidget {
                                     ),
                               ),
                             ),
-                            if (entry.finish != Finish.nonfoil) ...[
-                              const SizedBox(width: 6),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 4, vertical: 1),
-                                decoration: BoxDecoration(
-                                  color:        Colors.amber.shade700,
-                                  borderRadius: BorderRadius.circular(3),
-                                ),
-                                child: const Text(
-                                  'foil',
-                                  style: TextStyle(
-                                    color: Colors.white, fontSize: 9,
-                                  ),
-                                ),
-                              ),
-                            ],
                           ],
                         ),
+                        const SizedBox(height: 3),
+                        AttributeChips.of(entry, deviationsOnly: true),
                       ],
                     ),
                   ),

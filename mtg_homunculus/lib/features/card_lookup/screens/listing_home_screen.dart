@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../data/collection_database.dart';
+import '../models/scan_defaults.dart';
 import 'listing_detail_screen.dart';
 import 'quick_scan_screen.dart';
 
@@ -46,6 +47,10 @@ class _ListingHomeScreenState extends State<ListingHomeScreen> {
   }
 
   Future<void> _load() async {
+    // Loaded here because this screen is the only way into the sub-app, and
+    // every surface below it renders chips against these.
+    await ScanDefaults.loadCurrent();
+
     final listings = await _db.allLists();
     final counts   = await _db.countsForAll();
     if (mounted) {
