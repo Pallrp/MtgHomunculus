@@ -62,47 +62,16 @@ class HashIndex {
   /// leading hypothesis and is untested. Note `dhash_test` proves invariance to
   /// **uniform** brightness scaling only, which says nothing about a ramp.
   ///
-  /// ## Raised 20 -> 26 on 2026-08-26, and why the calibration above was wrong
+  /// **Raising this is the wrong lever.** At 20 the median is already 2
+  /// candidates and the max is 7; loosening trades missed matches for constant
+  /// Choose Version prompts. Five of the 26 hits sat exactly at 20, so the
+  /// distribution is censored here — some misses are matches just outside.
   ///
-  /// That first pass measured **how far the nearest match was**. It never
-  /// checked whether the nearest match was the right card. Instrumenting the
-  /// scan out to 40 showed it usually is not:
-  ///
-  /// ```
-  /// true card   its distance   nearest match (a different card)
-  /// m21/267     23             m14/238 @ 14
-  /// m21/267     17             m20/270 @ 11
-  /// m21/267     21             c15/332 @ 12
-  /// xln/180     23             onc/168 @ 19     -> added as Tainted Wood
-  /// xln/180     24             rix/125 @ 20     -> added as the wrong printing
-  /// ```
-  ///
-  /// Across 21 frames the correct card was **never** the nearest record. Wrong
-  /// cards sat at 10-22, the right one at 17-27 — bands that overlap almost
-  /// completely, so no threshold can admit the right card and exclude the wrong
-  /// ones.
-  ///
-  /// **This is therefore not a ranking fix and cannot be one.** Raising the
-  /// bound only makes the right row *present*, so the collector number can pick
-  /// it out of the set. That narrowing is reliable when it has the row to work
-  /// with: every frame where the true card landed inside the bound resolved
-  /// correctly, four for four. Every frame where it fell outside produced either
-  /// a Choose Version prompt or a confident wrong add.
-  ///
-  /// 26 covers 19 of the 20 frames where a true card was found at all. Junk
-  /// frames are unaffected — their nearest records sat at 30-33, well clear.
-  ///
-  /// **The cost, stated plainly:** more candidates means more chances for a
-  /// *misread* collector number to find a spurious exact match and score its way
-  /// to the top. `read=kln/80` appears in the same log — the leading `1` clipped
-  /// off `180`. Nothing here defends against that yet.
-  ///
-  /// A confidence floor is the measured next lever if this is not enough: every
-  /// correct hash identification had its nearest record at <= 13, and both wrong
-  /// adds had theirs at >= 19, so refusing the hash path entirely above ~16 and
-  /// falling through to the name search separates them cleanly. Deliberately not
-  /// done yet — one change at a time, measured.
-  static const matchThreshold = 26;
+  /// Left as-is deliberately. Recall is ~59% but **precision was 100%** across
+  /// the sample, and combined with the OCR path that identifies a card inside
+  /// two frames. A scanner that occasionally waits half a second is fine; one
+  /// that confidently adds the wrong card is not.
+  static const matchThreshold = 20;
 
   /// [dev-tool] How far out to scan **for logging only**, 2026-08-26.
   ///
