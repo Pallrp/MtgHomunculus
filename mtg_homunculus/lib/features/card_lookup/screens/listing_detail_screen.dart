@@ -12,7 +12,7 @@ import '../widgets/listing_sheet.dart';
 import '../services/csv_exporter.dart';
 import 'card_detail_screen.dart';
 import '../widgets/scanner_overlay.dart'
-    show ScannerOverlay, ScannerOverlayState, CaptureButton;
+    show ScannerOverlay, ScannerOverlayState;
 
 // ---------------------------------------------------------------------------
 // Screen
@@ -59,6 +59,25 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
   double _activeThreshold(BuildContext context) =>
       _minSheetSize(context) + 0.03;
 
+  double? _snapFor;
+  List<double>? _snapSizes;
+
+  /// The snap stops, as one list instance that survives rebuilds.
+  ///
+  /// **This identity matters.** `DraggableScrollableSheet.didUpdateWidget`
+  /// compares `snapSizes` with `!=`, which for a Dart list is identity — so a
+  /// freshly built list reads as "changed" and it calls `goBallistic(0)`,
+  /// snapping the sheet to the nearest stop. Crossing `_activeThreshold`
+  /// fires a `setState` a few pixels into a drag, so a rebuilt list meant every
+  /// upward drag snapped straight back to peek.
+  List<double> _snaps(double minSheet) {
+    if (_snapSizes == null || _snapFor != minSheet) {
+      _snapFor = minSheet;
+      _snapSizes = [minSheet, _maxSheetSize];
+    }
+    return _snapSizes!;
+  }
+
   final _sheetController = DraggableScrollableController();
   final _scannerKey      = GlobalKey<ScannerOverlayState>();
 
@@ -67,7 +86,6 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
   StreamSubscription<List<Entry>>? _entriesSub;
   bool         _loading       = true;
   bool         _cameraActive  = true;
-  bool         _detecting     = false;   // drives capture-button green tint
 
   EntrySort    _sort          = EntrySort.scanned;
   Set<int>     _selected      = const {};
@@ -340,28 +358,10 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
               showCaptureButton:  false,
               onCardAdded:        _onCardAdded,
               onEntryTapped:      _openDetail,
-              onDetectionChanged: (d) => setState(() => _detecting     = d),
               onIdle:             _onScannerIdle,
               onDuplicate:        _onDuplicate,
             ),
           ),
-
-          // Manual capture lives on the camera surface, not the sheet edge —
-          // that button is the chevron. Placed above the peek sheet rather than
-          // at a fixed inset, so it clears whatever the sheet and the system
-          // navigation bar actually take.
-          if (_cameraActive)
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: minSheet * MediaQuery.of(context).size.height + 16,
-              child: Center(
-                child: CaptureButton(
-                  detecting: _detecting,
-                  onTap: () => _scannerKey.currentState?.capture(),
-                ),
-              ),
-            ),
 
           // Draggable listing sheet.
           DraggableScrollableSheet(
@@ -372,7 +372,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
             snap:             true,
             // Peek and full only. A third stop would need its own answer to
             // "is the camera on?", which nobody could predict.
-            snapSizes:        [minSheet, _maxSheetSize],
+            snapSizes:        _snaps(minSheet),
             builder: (context, scrollController) => ListingSheet(
               listName:         _list!.name,
               entries:          _entries,
