@@ -11,7 +11,8 @@ import '../widgets/card_picker.dart';
 import '../widgets/listing_sheet.dart';
 import '../services/csv_exporter.dart';
 import 'card_detail_screen.dart';
-import '../widgets/scanner_overlay.dart' show ScannerOverlay, ScannerOverlayState;
+import '../widgets/scanner_overlay.dart'
+    show ScannerOverlay, ScannerOverlayState, CaptureButton;
 
 // ---------------------------------------------------------------------------
 // Screen
@@ -48,8 +49,8 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
   /// row ended up drawn behind one.
   double _minSheetSize(BuildContext context) {
     final media = MediaQuery.of(context);
-    final size = (ListingSheet.peekContent + media.viewPadding.bottom + 8) /
-        media.size.height;
+    final size =
+        (ListingSheet.peekContent + media.viewPadding.bottom) / media.size.height;
     // Never let it exceed the expanded size on a very short screen.
     return size.clamp(0.08, _maxSheetSize - 0.05);
   }
@@ -104,6 +105,16 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
     if (!_sheetController.isAttached || !mounted) return;
     final active = _sheetController.size <= _activeThreshold(context);
     if (active != _cameraActive) setState(() => _cameraActive = active);
+  }
+
+  /// Back to the camera, from the management bar's camera button.
+  void _collapseToCamera() {
+    if (!_sheetController.isAttached || !mounted) return;
+    _sheetController.animateTo(
+      _minSheetSize(context),
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOut,
+    );
   }
 
   /// Nothing detected for 30 seconds — open the sheet.
@@ -335,6 +346,23 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
             ),
           ),
 
+          // Manual capture lives on the camera surface, not the sheet edge —
+          // that button is the chevron. Placed above the peek sheet rather than
+          // at a fixed inset, so it clears whatever the sheet and the system
+          // navigation bar actually take.
+          if (_cameraActive)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: minSheet * MediaQuery.of(context).size.height + 16,
+              child: Center(
+                child: CaptureButton(
+                  detecting: _detecting,
+                  onTap: () => _scannerKey.currentState?.capture(),
+                ),
+              ),
+            ),
+
           // Draggable listing sheet.
           DraggableScrollableSheet(
             controller:       _sheetController,
@@ -352,12 +380,12 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
               sheetController:  _sheetController,
               minSheetSize:     minSheet,
               cameraActive:     _cameraActive,
-              detecting:        _detecting,
+              maxSheetSize:     _maxSheetSize,
               pulseEntryId:     _pulseEntryId,
               onDeleteCard:     _deleteCard,
               onSetQuantity:    _setQuantity,
               onCardTap:        (entry) => _openDetail(entry.id),
-              onCapture:        () => _scannerKey.currentState?.capture(),
+              onCollapse:       _collapseToCamera,
               onExportCsv:      _exportCsv,
               onManualAdd:      _manualAdd,
               sort:             _sort,

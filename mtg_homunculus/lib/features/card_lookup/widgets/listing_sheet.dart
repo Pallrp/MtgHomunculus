@@ -5,7 +5,6 @@ import '../models/scan_defaults.dart';
 import '../models/scryfall_card.dart';
 import '../theme/picker_tokens.dart';
 import 'attribute_chips.dart';
-import 'scanner_overlay.dart' show CaptureButton;
 
 /// What the slot under the management bar is currently showing.
 ///
@@ -38,7 +37,9 @@ class ListingSheet extends StatelessWidget {
   /// Whether the camera is running — the same thing as the sheet being
   /// collapsed, so it also decides peek versus full.
   final bool cameraActive;
-  final bool detecting;
+
+  /// The expanded fraction, so the chevron knows where to animate to.
+  final double maxSheetSize;
 
   /// The entry the peek row pulses for: a frame was discarded because this card
   /// is the one already in the last-added slot.
@@ -47,7 +48,8 @@ class ListingSheet extends StatelessWidget {
   final Future<void> Function(int entryId) onDeleteCard;
   final Future<void> Function(int entryId, int quantity) onSetQuantity;
   final void Function(Entry entry) onCardTap;
-  final VoidCallback onCapture;
+  /// Collapse back to the camera, from the management bar.
+  final VoidCallback onCollapse;
   final VoidCallback onExportCsv;
   final VoidCallback onManualAdd;
 
@@ -75,11 +77,11 @@ class ListingSheet extends StatelessWidget {
     required this.sheetController,
     required this.minSheetSize,
     required this.cameraActive,
-    required this.detecting,
+    required this.maxSheetSize,
     required this.onDeleteCard,
     required this.onSetQuantity,
     required this.onCardTap,
-    required this.onCapture,
+    required this.onCollapse,
     required this.onExportCsv,
     required this.onManualAdd,
     required this.sort,
@@ -98,8 +100,18 @@ class ListingSheet extends StatelessWidget {
   /// The chevron straddles the sheet edge, so half of it sits on the surface.
   static const double _chevHalf = PickerTokens.chevron / 2;
 
-  /// Chevron half plus one row. The artifact's measured peek total.
-  static const double peekContent = _chevHalf + PickerTokens.rowHeight;
+  /// How tall the sheet must be at peek, before the navigation bar.
+  ///
+  /// The surface starts a chevron-half down, the row needs another chevron-half
+  /// of clearance for the button sitting on it, then the row itself and a little
+  /// breathing room.
+  ///
+  /// **This must not be less than the content**, or the peek list becomes
+  /// scrollable by a few pixels — and a scrollable that can move eats the
+  /// upward drag that would otherwise expand the sheet, which is exactly the
+  /// "jiggles but never opens" failure.
+  static const double peekContent =
+      _chevHalf + _chevHalf + PickerTokens.rowHeight + 8;
 
   bool get _full => !cameraActive;
 
@@ -120,21 +132,17 @@ class ListingSheet extends StatelessWidget {
 
   // ---------------------------------------------------------------------------
 
-  /// The camera button never changes meaning.
+  /// Tap to open, tap to close.
   ///
-  /// Collapsed it captures; expanded it collapses back to the camera. Same idea
-  /// either way — *get me to the camera* — which is why the slot below carries
-  /// the modes instead of this.
-  IconData get _cameraIcon =>
-      cameraActive ? Icons.camera_alt_rounded : Icons.keyboard_arrow_down_rounded;
-
-  VoidCallback _cameraTap() => cameraActive
-      ? onCapture
-      : () => sheetController.animateTo(
-            minSheetSize,
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeOut,
-          );
+  /// The design is built on this control rather than on the drag: it is visibly
+  /// a button, unlike a grabber, and it works when a drag does not. Dragging
+  /// still expands the sheet — the peek content is sized so nothing steals the
+  /// gesture — but the chevron is the affordance.
+  void _toggle() => sheetController.animateTo(
+        cameraActive ? maxSheetSize : minSheetSize,
+        duration: const Duration(milliseconds: 280),
+        curve: Curves.easeOut,
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -183,13 +191,7 @@ class ListingSheet extends StatelessWidget {
           top: 0,
           left: 0,
           right: 0,
-          child: Center(
-            child: CaptureButton(
-              detecting: detecting && cameraActive,
-              onTap: _cameraTap(),
-              icon: _cameraIcon,
-            ),
-          ),
+          child: Center(child: _ChevronButton(open: _full, onTap: _toggle)),
         ),
       ],
     );
@@ -209,6 +211,14 @@ class ListingSheet extends StatelessWidget {
       ),
       child: Row(
         children: [
+          // Camera first, and it never changes meaning: collapse to peek and
+          // restart the stream.
+          _IconBtn(
+            icon: Icons.camera_alt_rounded,
+            tooltip: 'Back to the camera',
+            onTap: onCollapse,
+          ),
+          const SizedBox(width: 8),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -381,7 +391,7 @@ class ListingSheet extends StatelessWidget {
   }
 
   Widget _empty(BuildContext context) => Padding(
-        padding: EdgeInsets.fromLTRB(14, _full ? 16 : _chevHalf + 16, 14, 20),
+        padding: EdgeInsets.fromLTRB(14, _full ? 16 : _chevHalf + 12, 14, 20),
         child: Center(
           child: Text(
             query.trim().isEmpty
@@ -583,14 +593,12 @@ class _EntryRowState extends State<_EntryRow>
       onTap: widget.onTap,
       child: Container(
         // Thumbnail-driven, so the chips ride along free.
-        constraints: BoxConstraints(
-          minHeight: widget.peek
-              ? PickerTokens.rowHeight + ListingSheet._chevHalf
-              : PickerTokens.rowHeight,
-        ),
+        constraints:
+            const BoxConstraints(minHeight: PickerTokens.rowHeight),
         padding: EdgeInsets.fromLTRB(
           10,
-          widget.peek ? ListingSheet._chevHalf + 8 : 8,
+          // Clearance for the chevron's lower half, which sits on the surface.
+          widget.peek ? ListingSheet._chevHalf : 8,
           10,
           8,
         ),
@@ -785,6 +793,39 @@ class _IconBtn extends StatelessWidget {
             borderRadius: BorderRadius.circular(9),
           ),
           child: Icon(icon, size: small ? 15 : 18, color: fg),
+        ),
+      ),
+    );
+  }
+}
+
+/// The circular toggle straddling the sheet's top edge.
+class _ChevronButton extends StatelessWidget {
+  final bool open;
+  final VoidCallback onTap;
+
+  const _ChevronButton({required this.open, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = PickerTokens.of(context);
+    return Material(
+      color: t.surface,
+      shape: CircleBorder(side: BorderSide(color: t.line)),
+      elevation: 4,
+      child: InkWell(
+        onTap: onTap,
+        customBorder: const CircleBorder(),
+        child: SizedBox(
+          width: PickerTokens.chevron,
+          height: PickerTokens.chevron,
+          child: Icon(
+            open
+                ? Icons.keyboard_arrow_down_rounded
+                : Icons.keyboard_arrow_up_rounded,
+            size: 20,
+            color: t.text,
+          ),
         ),
       ),
     );
