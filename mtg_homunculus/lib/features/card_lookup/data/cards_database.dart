@@ -265,6 +265,75 @@ class CardsDatabase extends _$CardsDatabase {
     return [for (final r in rows) r.read<String>('name')];
   }
 
+  // ---------------------------------------------------------------------------
+  // Search
+  // ---------------------------------------------------------------------------
+
+  /// One query field, matched against the card name joined to its set code.
+  ///
+  /// ```
+  /// forest                 -> every Forest printing
+  /// forest lci             -> Forests in Lost Caverns
+  /// hour of devastation    -> the CARD, not the set
+  /// hou                    -> cards whose NAME contains "hou"
+  /// ```
+  ///
+  /// **A token only acts as a set filter when a name term survives without it.**
+  /// That single rule is what stops `hou` from paging through 300 cards of Hour
+  /// of Devastation: nobody types a set code intending to browse a whole set, so
+  /// the case is deliberately not supported, and browsing one belongs behind an
+  /// explicit affordance rather than falling out of a short query.
+  ///
+  /// Set *names* are not searchable. The set code is what the tile shows and what
+  /// is printed on the card, so what a user types is what they read back.
+  Future<List<Card>> search(String query, {int limit = 60}) async {
+    final parsed = await parseQuery(query);
+    if (parsed.name.isEmpty) return const [];
+
+    final names = await nameCandidates(parsed.name);
+    if (names.isEmpty) return const [];
+
+    final q = select(cards)..where((c) => c.name.isIn(names));
+    if (parsed.setCode != null) {
+      q.where((c) => c.setCode.equals(parsed.setCode!));
+    }
+    // Newest first: for Change Version — the scope this most often opens in —
+    // the recent printing is the one someone is most likely holding.
+    q
+      ..orderBy([(c) => OrderingTerm.desc(c.releasedAt)])
+      ..limit(limit);
+    return q.get();
+  }
+
+  /// Split a query into a name term and an optional set filter.
+  ///
+  /// Exposed for testing: the grammar is one rule and it is the whole of the
+  /// search behaviour, so it is worth pinning directly.
+  Future<({String name, String? setCode})> parseQuery(String query) async {
+    final tokens = query.trim().split(RegExp(r'\s+'))
+      ..removeWhere((t) => t.isEmpty);
+    if (tokens.isEmpty) return (name: '', setCode: null);
+
+    // A lone token is always a name, however set-code-shaped it looks.
+    if (tokens.length > 1) {
+      final last = tokens.last.toLowerCase();
+      if (last.length >= 2 && last.length <= 5 && await _isSetCode(last)) {
+        return (name: tokens.sublist(0, tokens.length - 1).join(' '), setCode: last);
+      }
+    }
+    return (name: tokens.join(' '), setCode: null);
+  }
+
+  Future<bool> _isSetCode(String code) async =>
+      await (select(sets)..where((s) => s.code.equals(code))).getSingleOrNull() !=
+      null;
+
+  /// Every printing of a card, newest first.
+  Future<List<Card>> printingsOf(String name) => (select(cards)
+        ..where((c) => c.name.equals(name))
+        ..orderBy([(c) => OrderingTerm.desc(c.releasedAt)]))
+      .get();
+
   /// Lowercase, letters/digits/spaces only.
   ///
   /// ML Kit invents commas and apostrophes constantly and they carry no

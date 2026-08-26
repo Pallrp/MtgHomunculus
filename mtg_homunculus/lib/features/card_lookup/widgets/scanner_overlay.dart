@@ -25,9 +25,7 @@ import '../services/dhash.dart';
 import '../services/duplicate_guard.dart';
 import '../services/scan_pipeline.dart';
 import 'card_border_painter.dart';
-import 'choose_version_sheet.dart';
-import 'manual_entry_dialog.dart';
-import 'printing_browser_sheet.dart';
+import 'card_picker.dart';
 import 'ocr_debug_panel.dart';
 import 'tuning_panel.dart';
 
@@ -61,13 +59,11 @@ class ScannerOverlay extends StatefulWidget {
   /// Returns the entry id of the new or quantity-incremented row.
   final Future<int> Function(ScryfallCard card)? onCardAdded;
 
-  /// Called when the user picks a different printing or foil status for an
-  /// already-matched result (triggered from the printing browser sheet).
-  final void Function(
-    int entryId,
-    ScryfallCard newPrinting,
-    bool isFoil,
-  )? onCardUpdated;
+  /// Called when the user taps the chip for a card that was just added, to open
+  /// it for correction. The overlay does not own Card Detail — it is a screen,
+  /// and pushing one from inside the camera surface would leave the scanner
+  /// running underneath it.
+  final void Function(int entryId)? onEntryTapped;
 
   /// Whether the overlay should render its own capture button.
   ///
@@ -100,7 +96,7 @@ class ScannerOverlay extends StatefulWidget {
     super.key,
     required this.isActive,
     this.onCardAdded,
-    this.onCardUpdated,
+    this.onEntryTapped,
     this.showCaptureButton   = true,
     this.showTuningButton    = false,
     this.onDetectionChanged,
@@ -602,6 +598,16 @@ class ScannerOverlayState extends State<ScannerOverlay> {
     unawaited(_capture());
   }
 
+  /// The scanner never saw it — open the picker's full-screen scope.
+  Future<void> _manualAdd() async {
+    final db = _cardsDb ??= CardsDatabase();
+    if (!mounted) return;
+    final picked = await CardPicker.showScreen(context, db: db);
+    if (picked == null) return;
+    final card = await ScanPipeline.toScryfallCard(db, picked.card);
+    await widget.onCardAdded?.call(card);
+  }
+
   /// Tell the parent the user has stopped scanning.
   ///
   /// Fires once per idle stretch, and rearms only when a card is seen again —
@@ -681,8 +687,13 @@ class ScannerOverlayState extends State<ScannerOverlay> {
             _liveRects = const [];
           });
           try {
-            return await ChooseVersionSheet.show(context,
-                candidates: candidates, db: db);
+            final picked = await CardPicker.showSheet(
+              context,
+              scope: PickerScope.chooseVersion,
+              db: db,
+              initial: candidates,
+            );
+            return picked?.card;
           } finally {
             // A `finally`, so this lifts on a pick, a skip, and a back-gesture
             // dismissal alike.
@@ -726,20 +737,11 @@ class ScannerOverlayState extends State<ScannerOverlay> {
     return switch (result) {
       MatchedResult(:final card, :final entryId) => _MatchedChip(
           card:  card,
-          onTap: () => PrintingBrowserSheet.show(
-            context,
-            card:      card,
-            entryId:   entryId,
-            onUpdated: widget.onCardUpdated,
-          ),
+          onTap: () => widget.onEntryTapped?.call(entryId),
         ),
-      FailedResult(:final ocrText) => _FailedChip(
-          ocrText: ocrText,
-          onTap:   () => ManualEntryDialog.show(
-            context,
-            ocrText:     ocrText,
-            onCardAdded: widget.onCardAdded,
-          ),
+      FailedResult() => _FailedChip(
+          ocrText: '',
+          onTap:   _manualAdd,
         ),
       // Never reaches here — filtered in onResult, since a duplicate is the
       // loop working rather than an outcome to report.

@@ -45,7 +45,6 @@ class _QuickScanScreenState extends State<QuickScanScreen> {
               showCaptureButton:  false,
               showTuningButton:   true,
               onCardAdded:        null,
-              onCardUpdated:      null,
               onDetectionChanged: (d) => setState(() => _detecting     = d),
             ),
           ),

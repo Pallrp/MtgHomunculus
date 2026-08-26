@@ -3,12 +3,13 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../../core/logging/app_logger.dart';
+import '../data/cards_database.dart';
 import '../data/collection_database.dart';
 import '../models/scan_defaults.dart';
 import '../models/scryfall_card.dart';
 import '../widgets/attribute_chips.dart';
 import '../services/csv_exporter.dart';
-import '../widgets/printing_browser_sheet.dart';
+import 'card_detail_screen.dart';
 import '../widgets/scanner_overlay.dart' show ScannerOverlay, ScannerOverlayState, CaptureButton;
 
 // ---------------------------------------------------------------------------
@@ -99,6 +100,11 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
 
   CollectionDatabase get _db => CollectionDatabase.instance;
 
+  /// Opened lazily and kept: Card Detail needs it for the finish control, which
+  /// has to know what the printing actually came in.
+  CardsDatabase? _cardsDb;
+  CardsDatabase get _cards => _cardsDb ??= CardsDatabase();
+
   /// Entries arrive as a stream, so a card added by the scan loop shows up
   /// without the screen having to know a scan happened.
   Future<void> _loadListing() async {
@@ -144,47 +150,21 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
     return id;
   }
 
-  /// Called when the user picks a different printing or foil status from the
-  /// printing browser sheet.  Fire-and-forget; errors are logged.
-  void _onCardUpdated(int entryId, ScryfallCard newPrinting, bool isFoil) {
-    _doCardUpdate(entryId, newPrinting, isFoil).catchError((Object e, StackTrace st) {
-      AppLogger.e('ListingDetailScreen: update failed', error: e, stackTrace: st);
-    });
-  }
-
-  Future<void> _doCardUpdate(
-    int entryId, ScryfallCard newPrinting, bool isFoil,
-  ) async {
-    await _db.updateEntry(
-      entryId,
-      cardId:          newPrinting.scryfallId,
-      name:            newPrinting.name,
-      setCode:         newPrinting.setCode,
-      setName:         newPrinting.setName,
-      collectorNumber: newPrinting.collectorNumber,
-      finish:          isFoil ? Finish.foil : Finish.nonfoil,
-    );
-  }
+  /// Card Detail is the one place a scan is corrected after the fact.
+  ///
+  /// Pushed from here rather than from inside the overlay: it is a screen, and
+  /// the camera should not keep running underneath one. Entries arrive by
+  /// stream, so whatever it changes shows up without being reported back.
+  Future<void> _openDetail(int entryId) => CardDetailScreen.open(
+        context,
+        entryId: entryId,
+        collection: _db,
+        cards: _cards,
+      );
 
   // ---------------------------------------------------------------------------
   // Listing mutations (called from sheet rows)
   // ---------------------------------------------------------------------------
-
-  /// Adapt an entry to the model the printing browser speaks.
-  ///
-  /// Built from the snapshot rather than a `cards.db` lookup, so it holds only
-  /// what the row itself knows — enough to open the browser, which then fetches
-  /// the printings it lists.
-  ScryfallCard _asScryfallCard(Entry e) => ScryfallCard.fromLocal(
-        id:              e.cardId,
-        name:            e.snapName,
-        setCode:         e.snapSetCode,
-        setName:         e.snapSetName.isEmpty
-            ? e.snapSetCode.toUpperCase()
-            : e.snapSetName,
-        collectorNumber: e.snapCollector,
-        finishes:        e.finish,
-      );
 
   Future<void> _deleteCard(int entryId) => _db.removeEntry(entryId);
 
@@ -238,7 +218,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
               isActive:           _cameraActive,
               showCaptureButton:  false,
               onCardAdded:        _onCardAdded,
-              onCardUpdated:      _onCardUpdated,
+              onEntryTapped:      _openDetail,
               onDetectionChanged: (d) => setState(() => _detecting     = d),
               onIdle:             _onScannerIdle,
             ),
@@ -262,13 +242,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
               detecting:        _detecting,
               onDeleteCard:     _deleteCard,
               onSetQuantity:    _setQuantity,
-              onCardTap: (entry) => PrintingBrowserSheet.show(
-                context,
-                card:      _asScryfallCard(entry),
-                entryId:   entry.id,
-                isFoil:    entry.finish == Finish.foil,
-                onUpdated: _onCardUpdated,
-              ),
+              onCardTap: (entry) => _openDetail(entry.id),
               onCapture: () => _scannerKey.currentState?.capture(),
               onExportCsv: _exportCsv,
             ),
