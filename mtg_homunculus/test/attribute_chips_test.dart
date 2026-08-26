@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mtg_homunculus/features/card_lookup/data/collection_database.dart';
 import 'package:mtg_homunculus/features/card_lookup/models/scan_defaults.dart';
+import 'package:mtg_homunculus/features/card_lookup/theme/picker_tokens.dart';
 import 'package:mtg_homunculus/features/card_lookup/widgets/attribute_chips.dart';
 
 void main() {
@@ -11,21 +12,19 @@ void main() {
     String language = 'en',
     int condition = Condition.nearMint,
     ScanDefaults defaults = const ScanDefaults(),
-    bool deviationsOnly = false,
   }) =>
       tester.pumpWidget(MaterialApp(
+        theme: ThemeData(extensions: const [PickerTokens.light]),
         home: Scaffold(
           body: AttributeChips(
             finish: finish,
             language: language,
             condition: condition,
             defaults: defaults,
-            deviationsOnly: deviationsOnly,
           ),
         ),
       ));
 
-  /// The decoration of the chip carrying [label].
   BoxDecoration decorationOf(WidgetTester tester, String label) {
     final container = tester.widget<Container>(
       find.ancestor(of: find.text(label), matching: find.byType(Container)).first,
@@ -33,11 +32,33 @@ void main() {
     return container.decoration! as BoxDecoration;
   }
 
-  group('deviation-coded: finish and language', () {
-    testWidgets('matching the default is muted', (tester) async {
+  group('all three, always', () {
+    testWidgets('every attribute is shown even at defaults', (tester) async {
+      // Row height is thumbnail-driven, so chips ride along free — hiding the
+      // ones matching your defaults saves nothing and costs legibility.
       await pump(tester);
-      expect(decorationOf(tester, 'NONFOIL').gradient, isNull);
-      expect(decorationOf(tester, 'EN').gradient, isNull);
+      expect(find.text('NORMAL'), findsOneWidget);
+      expect(find.text('EN'), findsOneWidget);
+      expect(find.text('NM'), findsOneWidget);
+    });
+
+    testWidgets('nonfoil is labelled NORMAL, as a shop would', (tester) async {
+      await pump(tester);
+      expect(find.text('NONFOIL'), findsNothing);
+    });
+  });
+
+  group('deviation-coded: finish and language', () {
+    testWidgets('matching the default recedes', (tester) async {
+      await pump(tester);
+      const t = PickerTokens.light;
+      expect(decorationOf(tester, 'NORMAL').color, t.surface2);
+      expect(decorationOf(tester, 'EN').color, t.surface2);
+    });
+
+    testWidgets('differing takes the accent', (tester) async {
+      await pump(tester, language: 'ja');
+      expect(decorationOf(tester, 'JA').color, PickerTokens.light.accentSoft);
     });
 
     testWidgets('foil is the one gradient in the list', (tester) async {
@@ -45,7 +66,7 @@ void main() {
       expect(decorationOf(tester, 'FOIL').gradient, isNotNull);
     });
 
-    testWidgets('a foil default makes NONFOIL the notable chip', (tester) async {
+    testWidgets('a foil default makes NORMAL the notable chip', (tester) async {
       // The point of deviation-coding: what stands out is what is unusual *for
       // this user*, not a fixed idea of which finish is special.
       await pump(
@@ -53,17 +74,8 @@ void main() {
         finish: Finish.nonfoil,
         defaults: const ScanDefaults(finish: Finish.foil),
       );
-      final plain = decorationOf(tester, 'NONFOIL');
-      await pump(tester, finish: Finish.nonfoil);
-      final muted = decorationOf(tester, 'NONFOIL');
-      expect(plain.color, isNot(muted.color));
-    });
-
-    testWidgets('a non-default language is notable', (tester) async {
-      await pump(tester, language: 'ja');
-      final ja = decorationOf(tester, 'JA');
-      await pump(tester);
-      expect(ja.color, isNot(decorationOf(tester, 'EN').color));
+      expect(decorationOf(tester, 'NORMAL').color,
+          PickerTokens.light.accentSoft);
     });
 
     testWidgets('a Japanese default makes EN the notable one', (tester) async {
@@ -72,60 +84,48 @@ void main() {
         language: 'en',
         defaults: const ScanDefaults(language: 'ja'),
       );
-      final en = decorationOf(tester, 'EN');
-      await pump(tester);
-      expect(en.color, isNot(decorationOf(tester, 'EN').color));
+      expect(decorationOf(tester, 'EN').color, PickerTokens.light.accentSoft);
     });
   });
 
   group('severity-coded: condition', () {
-    testWidgets('warms as the card gets worse', (tester) async {
-      final shades = <int, Color?>{};
+    testWidgets('each step has its own colour from the artifact ramp',
+        (tester) async {
+      const t = PickerTokens.light;
+      final expected = {
+        Condition.nearMint: t.surface2,
+        Condition.lightlyPlayed: t.condLpBg,
+        Condition.moderatelyPlayed: t.condMpBg,
+        Condition.heavilyPlayed: t.condHpBg,
+        Condition.damaged: t.condDmBg,
+      };
       for (final c in Condition.all) {
         await pump(tester, condition: c);
-        shades[c] = decorationOf(tester, Condition.label(c)).color;
+        expect(decorationOf(tester, Condition.label(c)).color, expected[c],
+            reason: Condition.label(c));
       }
-      // Four distinct damaged states, none of them sharing a colour.
-      final damaged = [
-        for (final c in Condition.all)
-          if (c != Condition.nearMint) shades[c],
-      ];
-      expect(damaged.toSet(), hasLength(damaged.length));
     });
 
     testWidgets('does NOT follow the user default', (tester) async {
       // The rule that is easy to get backwards. A user whose cards are mostly
       // played must not see NM painted as the notable chip.
       await pump(tester, condition: Condition.nearMint);
-      final nmNormally = decorationOf(tester, 'NM').color;
+      final normally = decorationOf(tester, 'NM').color;
 
       await pump(
         tester,
         condition: Condition.nearMint,
         defaults: const ScanDefaults(condition: Condition.lightlyPlayed),
       );
-      expect(decorationOf(tester, 'NM').color, nmNormally);
+      expect(decorationOf(tester, 'NM').color, normally);
     });
 
-    testWidgets('is shown even when only deviations are wanted', (tester) async {
-      // NM is information, not an absence of it.
-      await pump(tester, deviationsOnly: true);
-      expect(find.text('NM'), findsOneWidget);
-      expect(find.text('NONFOIL'), findsNothing);
-      expect(find.text('EN'), findsNothing);
-    });
-  });
-
-  group('deviationsOnly', () {
-    testWidgets('keeps the chips that differ', (tester) async {
-      await pump(
-        tester,
-        finish: Finish.foil,
-        language: 'ja',
-        deviationsOnly: true,
-      );
-      expect(find.text('FOIL'), findsOneWidget);
-      expect(find.text('JA'), findsOneWidget);
+    testWidgets('never takes the accent, however unusual it is',
+        (tester) async {
+      // Severity and deviation must not blur: LP is warm, never accent-green.
+      await pump(tester, condition: Condition.lightlyPlayed);
+      expect(decorationOf(tester, 'LP').color,
+          isNot(PickerTokens.light.accentSoft));
     });
   });
 

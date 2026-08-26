@@ -28,9 +28,17 @@ class PickerTokens extends ThemeExtension<PickerTokens> {
   /// Destructive only. Never a warning, never an emphasis.
   final Color vermilion;
 
-  /// The condition ramp's warm end, and its background.
-  final Color warn;
-  final Color warnBg;
+  /// The condition ramp — one pair per step, straight from the Last-Scan Bar
+  /// artifact. Four distinct colours, not an interpolation: the design names
+  /// them, so guessing the middle steps was wrong.
+  final Color condLp;
+  final Color condLpBg;
+  final Color condMp;
+  final Color condMpBg;
+  final Color condHp;
+  final Color condHpBg;
+  final Color condDm;
+  final Color condDmBg;
 
   /// Behind the camera feed.
   final Color viewfinder;
@@ -46,10 +54,26 @@ class PickerTokens extends ThemeExtension<PickerTokens> {
     required this.accent,
     required this.accentSoft,
     required this.vermilion,
-    required this.warn,
-    required this.warnBg,
+    required this.condLp,
+    required this.condLpBg,
+    required this.condMp,
+    required this.condMpBg,
+    required this.condHp,
+    required this.condHpBg,
+    required this.condDm,
+    required this.condDmBg,
     required this.viewfinder,
   });
+
+  /// Background and foreground for one condition, or null for Near Mint, which
+  /// is passive and takes the ordinary muted chip.
+  (Color fg, Color bg)? condition(int value) => switch (value) {
+        1 => (condLp, condLpBg),
+        2 => (condMp, condMpBg),
+        3 => (condHp, condHpBg),
+        4 => (condDm, condDmBg),
+        _ => null,
+      };
 
   static const light = PickerTokens(
     ground: Color(0xFFF2F5F3),
@@ -62,8 +86,14 @@ class PickerTokens extends ThemeExtension<PickerTokens> {
     accent: Color(0xFF1F9E6B),
     accentSoft: Color(0xFFD6F0E4),
     vermilion: Color(0xFFC4432F),
-    warn: Color(0xFFC2701F),
-    warnBg: Color(0xFFF8E4CE),
+    condLp: Color(0xFFA67C10),
+    condLpBg: Color(0xFFF7EDCE),
+    condMp: Color(0xFFC2701F),
+    condMpBg: Color(0xFFF8E4CE),
+    condHp: Color(0xFFBE5327),
+    condHpBg: Color(0xFFF8DBCB),
+    condDm: Color(0xFFC4432F),
+    condDmBg: Color(0xFFF8D5CE),
     viewfinder: Color(0xFF14201C),
   );
 
@@ -78,8 +108,14 @@ class PickerTokens extends ThemeExtension<PickerTokens> {
     accent: Color(0xFF5FD9A0),
     accentSoft: Color(0xFF17322A),
     vermilion: Color(0xFFE86A56),
-    warn: Color(0xFFE89F58),
-    warnBg: Color(0xFF35240F),
+    condLp: Color(0xFFE8C766),
+    condLpBg: Color(0xFF33290F),
+    condMp: Color(0xFFE89F58),
+    condMpBg: Color(0xFF35240F),
+    condHp: Color(0xFFE8825C),
+    condHpBg: Color(0xFF35200F),
+    condDm: Color(0xFFE86A56),
+    condDmBg: Color(0xFF351A14),
     viewfinder: Color(0xFF0A100E),
   );
 
@@ -103,6 +139,13 @@ class PickerTokens extends ThemeExtension<PickerTokens> {
   /// Readable on the foil gradient in either theme, which is why it is a
   /// constant rather than a token.
   static const onFoil = Color(0xFF1A1A1A);
+
+  /// Measurements, from the artifact's reference table.
+  static const rowHeight = 76.0;
+  static const thumbWidth = 40.0;
+  static const thumbHeight = 56.0;
+  static const chevron = 34.0;
+  static const mgmtBarHeight = 54.0;
 
   static const radius = 10.0;
   static const radiusSmall = 8.0;
@@ -163,8 +206,14 @@ class PickerTokens extends ThemeExtension<PickerTokens> {
     Color? accent,
     Color? accentSoft,
     Color? vermilion,
-    Color? warn,
-    Color? warnBg,
+    Color? condLp,
+    Color? condLpBg,
+    Color? condMp,
+    Color? condMpBg,
+    Color? condHp,
+    Color? condHpBg,
+    Color? condDm,
+    Color? condDmBg,
     Color? viewfinder,
   }) =>
       PickerTokens(
@@ -178,8 +227,14 @@ class PickerTokens extends ThemeExtension<PickerTokens> {
         accent: accent ?? this.accent,
         accentSoft: accentSoft ?? this.accentSoft,
         vermilion: vermilion ?? this.vermilion,
-        warn: warn ?? this.warn,
-        warnBg: warnBg ?? this.warnBg,
+        condLp: condLp ?? this.condLp,
+        condLpBg: condLpBg ?? this.condLpBg,
+        condMp: condMp ?? this.condMp,
+        condMpBg: condMpBg ?? this.condMpBg,
+        condHp: condHp ?? this.condHp,
+        condHpBg: condHpBg ?? this.condHpBg,
+        condDm: condDm ?? this.condDm,
+        condDmBg: condDmBg ?? this.condDmBg,
         viewfinder: viewfinder ?? this.viewfinder,
       );
 
@@ -197,8 +252,14 @@ class PickerTokens extends ThemeExtension<PickerTokens> {
       accent: Color.lerp(accent, other.accent, t)!,
       accentSoft: Color.lerp(accentSoft, other.accentSoft, t)!,
       vermilion: Color.lerp(vermilion, other.vermilion, t)!,
-      warn: Color.lerp(warn, other.warn, t)!,
-      warnBg: Color.lerp(warnBg, other.warnBg, t)!,
+      condLp: Color.lerp(condLp, other.condLp, t)!,
+      condLpBg: Color.lerp(condLpBg, other.condLpBg, t)!,
+      condMp: Color.lerp(condMp, other.condMp, t)!,
+      condMpBg: Color.lerp(condMpBg, other.condMpBg, t)!,
+      condHp: Color.lerp(condHp, other.condHp, t)!,
+      condHpBg: Color.lerp(condHpBg, other.condHpBg, t)!,
+      condDm: Color.lerp(condDm, other.condDm, t)!,
+      condDmBg: Color.lerp(condDmBg, other.condDmBg, t)!,
       viewfinder: Color.lerp(viewfinder, other.viewfinder, t)!,
     );
   }

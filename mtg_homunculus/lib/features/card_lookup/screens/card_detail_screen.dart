@@ -126,7 +126,16 @@ class _CardDetailScreenState extends State<CardDetailScreen> {
     await VariantEditor.show(
       context,
       listId: entry.listId,
-      cardId: entry.cardId,
+      // Opened on the card's NAME, not this printing: a copy that differs only
+      // by edition is still a variant of the same card.
+      name: entry.snapName,
+      base: (
+        cardId: entry.cardId,
+        name: entry.snapName,
+        setCode: entry.snapSetCode,
+        setName: entry.snapSetName,
+        collectorNumber: entry.snapCollector,
+      ),
       db: widget.collection,
       cards: widget.cards,
       imageUpdatedAt: _printing?.imageUpdatedAt,

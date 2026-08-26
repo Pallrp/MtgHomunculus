@@ -128,11 +128,21 @@ class VariantEdit {
       );
 
   /// The variant an existing entry represents, for prepopulating the editor.
+  ///
+  /// Carries its printing, because the editor spans printings: two rows of the
+  /// same card in different editions are both variants of it.
   factory VariantEdit.of(Entry e) => VariantEdit(
         finish: e.finish,
         language: e.language,
         condition: e.condition,
         quantity: e.quantity,
+        printing: (
+          cardId: e.cardId,
+          name: e.snapName,
+          setCode: e.snapSetCode,
+          setName: e.snapSetName,
+          collectorNumber: e.snapCollector,
+        ),
       );
 }
 
@@ -552,19 +562,34 @@ class CollectionDatabase extends _$CollectionDatabase {
     };
   }
 
-  /// Which printings of [cardId] are already in [listId], for the picker's badge
-  /// and for opening the variant editor prepopulated.
+  /// Which printings of [cardId] are already in [listId], for the picker's badge.
   Future<List<Entry>> entriesForCard(int listId, String cardId) =>
       (select(entries)
             ..where((e) => e.listId.equals(listId) & e.cardId.equals(cardId)))
           .get();
 
-  /// Replace every variant of [cardId] in [listId] with exactly [wanted].
+  /// Every copy of a card in a list, **across printings**.
+  ///
+  /// What the variant editor opens on. Keying it by printing was wrong: a copy
+  /// that differs only by edition is exactly the kind of "these cannot be one
+  /// row" the editor exists for, so changing a variant's edition and reopening
+  /// must still show it.
+  Future<List<Entry>> entriesForCardName(int listId, String name) =>
+      (select(entries)
+            ..where((e) => e.listId.equals(listId) & e.snapName.equals(name))
+            ..orderBy([(e) => OrderingTerm.asc(e.addedAt)]))
+          .get();
+
+  /// Replace every copy of [name] in [listId] with exactly [wanted].
   ///
   /// The variant editor opens prepopulated with what the list already holds, so
   /// applying it is a **rewrite, not a diff the caller has to compute**: a
   /// variant the user cleared is gone, one they added is appended, and one they
   /// left alone keeps its `added_at` and therefore its place in scan order.
+  ///
+  /// **Keyed by card name, across printings.** Each wanted row names the
+  /// printing it belongs to, so changing a row's edition moves it without
+  /// leaving the set — which is the whole reason it is not keyed by printing.
   ///
   /// Quantities are only written where [VariantEdit.quantity] says so — an
   /// untouched variant keeps the count it had, which is what makes "open the
@@ -575,33 +600,31 @@ class CollectionDatabase extends _$CollectionDatabase {
   /// never asked for and cannot easily recognise.
   Future<void> setVariantsFor({
     required int listId,
-    required String cardId,
-    required List<VariantEdit> wanted,
     required String name,
-    required String setCode,
-    required String collectorNumber,
-    String setName = '',
+    required List<VariantEdit> wanted,
+    required VariantPrinting base,
   }) async {
     await transaction(() async {
-      final existing = await entriesForCard(listId, cardId);
+      final existing = await entriesForCardName(listId, name);
       final byKey = {
-        for (final e in existing) (e.finish, e.language, e.condition): e,
+        for (final e in existing)
+          (e.cardId, e.finish, e.language, e.condition): e,
       };
 
       final keep = <int>{};
       for (final w in wanted) {
-        // A row pointing at another printing has left this card's variant set.
-        // It is written under the printing it now names, and whatever row it
-        // came from falls out of `keep` and is deleted below.
-        final moved = w.printing;
-        if (moved != null && moved.cardId != cardId) {
+        final printing = w.printing ?? base;
+        final key = (printing.cardId, w.finish, w.language, w.condition);
+        final row = byKey[key];
+
+        if (row == null) {
           await addCard(
             listId: listId,
-            cardId: moved.cardId,
-            name: moved.name,
-            setCode: moved.setCode,
-            setName: moved.setName,
-            collectorNumber: moved.collectorNumber,
+            cardId: printing.cardId,
+            name: printing.name,
+            setCode: printing.setCode,
+            setName: printing.setName,
+            collectorNumber: printing.collectorNumber,
             finish: w.finish,
             language: w.language,
             condition: w.condition,
@@ -610,23 +633,6 @@ class CollectionDatabase extends _$CollectionDatabase {
           continue;
         }
 
-        final key = (w.finish, w.language, w.condition);
-        final row = byKey[key];
-        if (row == null) {
-          await addCard(
-            listId: listId,
-            cardId: cardId,
-            name: name,
-            setCode: setCode,
-            setName: setName,
-            collectorNumber: collectorNumber,
-            finish: w.finish,
-            language: w.language,
-            condition: w.condition,
-            quantity: w.quantity ?? 1,
-          );
-          continue;
-        }
         keep.add(row.id);
         if (w.quantity != null && w.quantity != row.quantity) {
           await (update(entries)..where((e) => e.id.equals(row.id)))

@@ -7,18 +7,26 @@ import '../theme/picker_tokens.dart';
 import 'attribute_chips.dart';
 import 'scanner_overlay.dart' show CaptureButton;
 
+/// What the slot under the management bar is currently showing.
+///
+/// **One slot, three occupants.** Only one is ever relevant, and each expands
+/// over the others rather than adding a row of its own — so the bar above never
+/// moves and the camera button never changes meaning.
+enum SlotMode { manualAdd, sort, select }
+
 /// The listing sheet — one component at two heights.
 ///
 /// ```
-/// Peek   one row: the card just scanned          camera running
-/// Full   management bar + every row              camera stopped
+/// Peek   the chevron and one row: the card just scanned    camera running
+/// Full   management bar, the slot, and every row           camera stopped
 /// ```
 ///
-/// **No mid-height state.** Two is enough, and a third would need its own answer
-/// to "is the camera on?" that nobody could predict.
+/// **Peek carries no management bar.** It is ~93 dp — the chevron's lower half
+/// plus a single row — and the viewfinder keeps the rest. A list name and a
+/// count there would cost a third of the peek to say what the user already knows.
 ///
-/// There is no separate toast and no closed state: before the first scan the
-/// sheet is the chevron and an empty line.
+/// **No mid-height stop and no closed state.** Before the first scan the sheet
+/// is the chevron and an empty line.
 class ListingSheet extends StatelessWidget {
   final String listName;
   final List<Entry> entries;
@@ -27,7 +35,7 @@ class ListingSheet extends StatelessWidget {
   final DraggableScrollableController sheetController;
   final double minSheetSize;
 
-  /// Whether the camera is running — which is the same thing as the sheet being
+  /// Whether the camera is running — the same thing as the sheet being
   /// collapsed, so it also decides peek versus full.
   final bool cameraActive;
   final bool detecting;
@@ -41,9 +49,18 @@ class ListingSheet extends StatelessWidget {
   final void Function(Entry entry) onCardTap;
   final VoidCallback onCapture;
   final VoidCallback onExportCsv;
+  final VoidCallback onManualAdd;
 
   final EntrySort sort;
   final void Function(EntrySort) onSortChanged;
+
+  /// Searches **this list**, never Scryfall. The one inside Manual Add does
+  /// that, and keeping them apart is cleaner than one field guessing.
+  final String query;
+  final void Function(String) onQueryChanged;
+
+  final SlotMode slotMode;
+  final void Function(SlotMode) onSlotModeChanged;
 
   final Set<int> selected;
   final void Function(Set<int>) onSelectionChanged;
@@ -64,8 +81,13 @@ class ListingSheet extends StatelessWidget {
     required this.onCardTap,
     required this.onCapture,
     required this.onExportCsv,
+    required this.onManualAdd,
     required this.sort,
     required this.onSortChanged,
+    required this.query,
+    required this.onQueryChanged,
+    required this.slotMode,
+    required this.onSlotModeChanged,
     required this.selected,
     required this.onSelectionChanged,
     required this.onMoveTo,
@@ -73,24 +95,36 @@ class ListingSheet extends StatelessWidget {
     this.pulseEntryId,
   });
 
-  /// Half the [CaptureButton] height. The button straddles this offset so its
-  /// top half floats in the camera feed and its bottom half rests on the sheet.
-  static const double _buttonHalf = 34.0;
+  /// The chevron straddles the sheet edge, so half of it sits on the surface.
+  static const double _chevHalf = PickerTokens.chevron / 2;
+
+  /// Chevron half plus one row. The artifact's measured peek total.
+  static const double peekContent = _chevHalf + PickerTokens.rowHeight;
 
   bool get _full => !cameraActive;
-  bool get _selecting => selected.isNotEmpty;
 
   int get _copies => entries.fold(0, (n, e) => n + e.quantity);
 
-  List<Entry> get _sorted => sort.apply(entries);
+  /// Sorted, then filtered by the in-list search.
+  List<Entry> get _visible {
+    final q = query.trim().toLowerCase();
+    final rows = sort.apply(entries);
+    if (q.isEmpty) return rows;
+    return [
+      for (final e in rows)
+        if (e.snapName.toLowerCase().contains(q) ||
+            e.snapSetCode.toLowerCase().contains(q))
+          e,
+    ];
+  }
 
   // ---------------------------------------------------------------------------
 
   /// The camera button never changes meaning.
   ///
-  /// Collapsed it captures; expanded it collapses back to the camera. It is the
-  /// same idea both ways — *get me to the camera* — which is why multi-select
-  /// adds a second row rather than transforming this one.
+  /// Collapsed it captures; expanded it collapses back to the camera. Same idea
+  /// either way — *get me to the camera* — which is why the slot below carries
+  /// the modes instead of this.
   IconData get _cameraIcon =>
       cameraActive ? Icons.camera_alt_rounded : Icons.keyboard_arrow_down_rounded;
 
@@ -106,14 +140,16 @@ class ListingSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = PickerTokens.of(context);
     // The system navigation bar sits under the sheet's bottom edge, so without
-    // this the peek row is drawn behind it. Derived from the device rather than
-    // guessed: gesture navigation and a three-button bar are different heights.
+    // this the peek row is drawn behind it. Taken from the device: gesture
+    // navigation and a three-button bar are different heights.
     final navBar = MediaQuery.viewPaddingOf(context).bottom;
+    final rows = _visible;
 
     return Stack(
+      clipBehavior: Clip.none,
       children: [
         Positioned(
-          top: _buttonHalf,
+          top: _chevHalf,
           left: 0,
           right: 0,
           bottom: 0,
@@ -124,15 +160,21 @@ class ListingSheet extends StatelessWidget {
             clipBehavior: Clip.antiAlias,
             child: CustomScrollView(
               controller: scrollController,
+              // Without this the sheet cannot be dragged open when its content
+              // is shorter than the viewport: a scrollable with no extent
+              // reports no drag, and DraggableScrollableSheet has nothing to
+              // follow. That is the peek state, i.e. always.
+              physics: const AlwaysScrollableScrollPhysics(),
               slivers: [
-                SliverToBoxAdapter(child: _bar(context)),
-                if (_full && _selecting)
-                  SliverToBoxAdapter(child: _selectionBar(context)),
-                if (entries.isEmpty)
+                if (_full) ...[
+                  SliverToBoxAdapter(child: _mgmtBar(context)),
+                  SliverToBoxAdapter(child: _slot(context)),
+                ],
+                if (rows.isEmpty)
                   SliverToBoxAdapter(child: _empty(context))
                 else
-                  _rows(context),
-                SliverToBoxAdapter(child: SizedBox(height: 16 + navBar)),
+                  _rows(context, rows),
+                SliverToBoxAdapter(child: SizedBox(height: navBar + 8)),
               ],
             ),
           ),
@@ -155,13 +197,13 @@ class ListingSheet extends StatelessWidget {
 
   // ---------------------------------------------------------------------------
 
-  /// Peek shows the list's identity; full adds the management controls.
-  Widget _bar(BuildContext context) {
+  /// Full height only. 54 dp, per the artifact.
+  Widget _mgmtBar(BuildContext context) {
     final t = PickerTokens.of(context);
     final unique = entries.length;
 
     return Container(
-      padding: const EdgeInsets.fromLTRB(12, _buttonHalf + 6, 8, 8),
+      padding: EdgeInsets.fromLTRB(10, _chevHalf + 8, 10, 8),
       decoration: BoxDecoration(
         border: Border(bottom: BorderSide(color: t.line)),
       ),
@@ -176,134 +218,201 @@ class ListingSheet extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: 14,
+                    fontSize: 13.5,
                     fontWeight: FontWeight.w600,
                     color: t.text,
                   ),
                 ),
                 Text(
-                  '$_copies ${_copies == 1 ? "card" : "cards"}'
-                  '${unique == _copies ? "" : " · $unique unique"}',
+                  '$_copies ${_copies == 1 ? "copy" : "copies"} · '
+                  '$unique unique',
                   style: PickerTokens.mono(context, size: 10.5),
                 ),
               ],
             ),
           ),
-          if (_full) ...[
-            _IconBtn(
-              icon: Icons.sort_rounded,
-              tooltip: 'Sort',
-              onTap: () => _pickSort(context),
+          const SizedBox(width: 6),
+          _IconBtn(
+            icon: Icons.swap_vert_rounded,
+            tooltip: 'Sort and search this list',
+            active: slotMode == SlotMode.sort,
+            onTap: () => onSlotModeChanged(
+              slotMode == SlotMode.sort ? SlotMode.manualAdd : SlotMode.sort,
             ),
-            const SizedBox(width: 6),
-            _IconBtn(
-              icon: Icons.checklist_rounded,
-              tooltip: 'Select',
-              // Opens with everything preselected — the common case is "all of
-              // these go somewhere", and deselecting a few is less work than
-              // ticking eighteen.
-              active: _selecting,
-              onTap: () => onSelectionChanged(
-                _selecting ? {} : {for (final e in entries) e.id},
-              ),
-            ),
-            const SizedBox(width: 6),
-            _IconBtn(
-              icon: Icons.more_horiz_rounded,
-              tooltip: 'List settings',
-              onTap: () => _listSettings(context),
-            ),
-          ],
+          ),
+          const SizedBox(width: 6),
+          _IconBtn(
+            icon: Icons.checklist_rounded,
+            tooltip: 'Select',
+            active: slotMode == SlotMode.select,
+            onTap: () {
+              if (slotMode == SlotMode.select) {
+                onSelectionChanged(const {});
+                onSlotModeChanged(SlotMode.manualAdd);
+              } else {
+                // Opens with everything selected — the common case is "all of
+                // these go somewhere", and deselecting a few is less work than
+                // ticking eighteen.
+                onSelectionChanged({for (final e in entries) e.id});
+                onSlotModeChanged(SlotMode.select);
+              }
+            },
+          ),
+          const SizedBox(width: 6),
+          _IconBtn(
+            icon: Icons.settings_outlined,
+            tooltip: 'List settings',
+            onTap: () => _listSettings(context),
+          ),
         ],
       ),
     );
   }
 
-  /// A **second** row, never a transformation of the first.
-  ///
-  /// The camera button and the list identity keep meaning what they meant, so
-  /// nothing the user learned a moment ago stops being true while selecting.
-  Widget _selectionBar(BuildContext context) {
+  /// The single row under the management bar.
+  Widget _slot(BuildContext context) {
     final t = PickerTokens.of(context);
-    final all = selected.length == entries.length;
+    final selecting = slotMode == SlotMode.select;
 
     return Container(
       decoration: BoxDecoration(
-        color: t.accentSoft,
-        border: Border(bottom: BorderSide(color: t.accent)),
+        color: selecting ? t.accentSoft : null,
+        border: Border(
+          bottom: BorderSide(color: selecting ? t.accent : t.line),
+        ),
       ),
-      padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
-      child: Row(
-        children: [
-          _IconBtn(
-            icon: all
-                ? Icons.check_box_rounded
-                : Icons.check_box_outline_blank_rounded,
-            tooltip: all ? 'Deselect all' : 'Select all',
-            active: all,
-            onTap: () => onSelectionChanged(
-              all ? {} : {for (final e in entries) e.id},
-            ),
+      padding: const EdgeInsets.fromLTRB(10, 7, 10, 7),
+      child: switch (slotMode) {
+        SlotMode.manualAdd => _TextBtn(
+            label: '+  Manual add',
+            wide: true,
+            onTap: onManualAdd,
           ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              '${selected.length} selected',
-              style: PickerTokens.mono(
-                context,
-                size: 12,
-                weight: FontWeight.w600,
-                color: t.accent,
+        SlotMode.sort => Row(
+            children: [
+              Expanded(child: _listSearchField(context)),
+              const SizedBox(width: 8),
+              _IconBtn(
+                icon: Icons.swap_vert_rounded,
+                tooltip: sort.label,
+                onTap: () => _pickSort(context),
               ),
-            ),
+            ],
           ),
-          // The trailing preposition is deliberate: both open a destination
-          // picker rather than acting immediately.
-          _TextBtn(label: 'Cut to', onTap: () => onMoveTo(selected, true)),
-          const SizedBox(width: 6),
-          _TextBtn(label: 'Copy to', onTap: () => onMoveTo(selected, false)),
-          const SizedBox(width: 6),
-          _IconBtn(
-            icon: Icons.delete_outline_rounded,
-            tooltip: 'Remove from list',
-            danger: true,
-            onTap: () => onDeleteSelected(selected),
+        SlotMode.select => Row(
+            children: [
+              _IconBtn(
+                icon: selected.length == entries.length
+                    ? Icons.check_box_rounded
+                    : Icons.check_box_outline_blank_rounded,
+                tooltip: selected.length == entries.length
+                    ? 'Deselect all'
+                    : 'Select all',
+                active: selected.length == entries.length,
+                small: true,
+                onTap: () => onSelectionChanged(
+                  selected.length == entries.length
+                      ? const {}
+                      : {for (final e in entries) e.id},
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '${selected.length} selected',
+                  style: PickerTokens.mono(
+                    context,
+                    size: 11.5,
+                    weight: FontWeight.w600,
+                    color: t.accent,
+                  ),
+                ),
+              ),
+              // The trailing preposition is deliberate: both open a destination
+              // picker rather than acting immediately.
+              _TextBtn(label: 'Cut to', onTap: () => onMoveTo(selected, true)),
+              const SizedBox(width: 5),
+              _TextBtn(
+                  label: 'Copy to', onTap: () => onMoveTo(selected, false)),
+              const SizedBox(width: 5),
+              _IconBtn(
+                icon: Icons.delete_outline_rounded,
+                tooltip: 'Remove from list',
+                danger: true,
+                small: true,
+                onTap: () => onDeleteSelected(selected),
+              ),
+            ],
           ),
-        ],
+      },
+    );
+  }
+
+  Widget _listSearchField(BuildContext context) {
+    final t = PickerTokens.of(context);
+    return SizedBox(
+      height: 32,
+      child: TextField(
+        controller: TextEditingController(text: query)
+          ..selection = TextSelection.collapsed(offset: query.length),
+        onChanged: onQueryChanged,
+        style: PickerTokens.mono(context, size: 12, color: t.text),
+        decoration: InputDecoration(
+          isDense: true,
+          filled: true,
+          fillColor: t.surface2,
+          hintText: 'Find in this list…',
+          hintStyle: PickerTokens.mono(context, size: 12, color: t.textFaint),
+          prefixIcon: Icon(Icons.search_rounded, size: 16, color: t.textFaint),
+          prefixIconConstraints:
+              const BoxConstraints(minWidth: 30, minHeight: 30),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(7),
+            borderSide: BorderSide(color: t.line),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(7),
+            borderSide: BorderSide(color: t.accent),
+          ),
+        ),
       ),
     );
   }
 
   Widget _empty(BuildContext context) => Padding(
-        padding: const EdgeInsets.fromLTRB(14, 12, 14, 16),
-        child: Text(
-          'No cards yet — scan to add.',
-          style: PickerTokens.mono(context, size: 12),
+        padding: EdgeInsets.fromLTRB(14, _full ? 16 : _chevHalf + 16, 14, 20),
+        child: Center(
+          child: Text(
+            query.trim().isEmpty
+                ? 'No cards yet — scan to add.'
+                : 'Nothing here matches.',
+            style: PickerTokens.mono(context, size: 11, color: PickerTokens.of(context).textFaint),
+          ),
         ),
       );
 
-  Widget _rows(BuildContext context) {
-    final rows = _sorted;
-    // Peek shows one row: the card just scanned. Newest first, always.
+  Widget _rows(BuildContext context, List<Entry> rows) {
+    // Peek shows one row: the card just scanned.
     final visible = _full ? rows : rows.take(1).toList();
 
     return SliverList.separated(
       itemCount: visible.length,
-      separatorBuilder: (_, _) => const Divider(height: 1),
+      separatorBuilder: (_, _) =>
+          Divider(height: 1, color: PickerTokens.of(context).line),
       itemBuilder: (context, i) {
         final entry = visible[i];
         return _EntryRow(
           entry: entry,
-          // The stepper is the peek row's control only. In the list the count is
-          // static text, because the list can be re-sorted — at which point
-          // "the newest one" stops meaning anything and an inconsistency
-          // between the top row and the rest would have no justification.
-          showStepper: !_full,
+          // The stepper is the peek row's control only. In the list every row
+          // shows a count — including the topmost, since the list can be
+          // re-sorted and "newest" stops meaning anything.
+          peek: !_full,
           pulsing: !_full && entry.id == pulseEntryId,
           selected: selected.contains(entry.id),
-          selecting: _full && _selecting,
+          selecting: _full && slotMode == SlotMode.select,
           onTap: () {
-            if (_full && _selecting) {
+            if (_full && slotMode == SlotMode.select) {
               final next = {...selected};
               next.contains(entry.id)
                   ? next.remove(entry.id)
@@ -325,7 +434,7 @@ class ListingSheet extends StatelessWidget {
   Future<void> _pickSort(BuildContext context) async {
     final picked = await showModalBottomSheet<EntrySort>(
       context: context,
-      builder: (_) => SafeArea(
+      builder: (sheetContext) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -334,9 +443,9 @@ class ListingSheet extends StatelessWidget {
                 title: Text(s.label),
                 trailing: s == sort
                     ? Icon(Icons.check_rounded,
-                        color: Theme.of(context).colorScheme.primary)
+                        color: PickerTokens.of(context).accent)
                     : null,
-                onTap: () => Navigator.of(context).pop(s),
+                onTap: () => Navigator.of(sheetContext).pop(s),
               ),
           ],
         ),
@@ -372,7 +481,7 @@ class ListingSheet extends StatelessWidget {
 
 /// Sort orders for a list.
 ///
-/// Deliberately no *filter*: search already covers what filtering would have
+/// Deliberately no *filter*: the slot's search covers what filtering would have
 /// done, and a filter UI is a lot of surface for a list you just built.
 enum EntrySort {
   scanned('Scanned'),
@@ -386,7 +495,7 @@ enum EntrySort {
   List<Entry> apply(List<Entry> entries) {
     final out = [...entries];
     switch (this) {
-      // `added_at` descending is the scan order the list arrives in.
+      // `added_at` descending restores scan order, newest first.
       case EntrySort.scanned:
         out.sort((a, b) => b.addedAt.compareTo(a.addedAt));
       case EntrySort.name:
@@ -411,7 +520,7 @@ enum EntrySort {
 /// Peek and list rows are identical except on the right.
 class _EntryRow extends StatefulWidget {
   final Entry entry;
-  final bool showStepper;
+  final bool peek;
   final bool pulsing;
   final bool selected;
   final bool selecting;
@@ -421,7 +530,7 @@ class _EntryRow extends StatefulWidget {
 
   const _EntryRow({
     required this.entry,
-    required this.showStepper,
+    required this.peek,
     required this.pulsing,
     required this.selected,
     required this.selecting,
@@ -461,15 +570,30 @@ class _EntryRowState extends State<_EntryRow>
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final t = PickerTokens.of(context);
     final e = widget.entry;
     final url = ScryfallCard.imageUrlFor(e.cardId, null, size: 'small');
 
+    final meta = e.snapSetName.isEmpty
+        ? '${e.snapSetCode.toUpperCase()} · ${e.snapCollector}'
+        : '${e.snapSetCode.toUpperCase()} · ${e.snapCollector} · '
+            '${e.snapSetName}';
+
     final row = InkWell(
       onTap: widget.onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      child: Container(
+        // Thumbnail-driven, so the chips ride along free.
+        constraints: BoxConstraints(
+          minHeight: widget.peek
+              ? PickerTokens.rowHeight + ListingSheet._chevHalf
+              : PickerTokens.rowHeight,
+        ),
+        padding: EdgeInsets.fromLTRB(
+          10,
+          widget.peek ? ListingSheet._chevHalf + 8 : 8,
+          10,
+          8,
+        ),
         child: Row(
           children: [
             if (widget.selecting)
@@ -480,25 +604,23 @@ class _EntryRowState extends State<_EntryRow>
                       ? Icons.check_circle_rounded
                       : Icons.circle_outlined,
                   size: 20,
-                  color: widget.selected
-                      ? theme.colorScheme.primary
-                      : theme.disabledColor,
+                  color: widget.selected ? t.accent : t.textFaint,
                 ),
               ),
             ClipRRect(
               borderRadius: BorderRadius.circular(4),
               child: SizedBox(
-                width: 36,
-                height: 50,
+                width: PickerTokens.thumbWidth,
+                height: PickerTokens.thumbHeight,
                 child: url == null
-                    ? ColoredBox(color: theme.colorScheme.surfaceContainerHighest)
+                    ? ColoredBox(color: t.surface2)
                     : Image.network(
                         url,
                         fit: BoxFit.cover,
                         errorBuilder: (c, _, _) => ColoredBox(
-                          color: theme.colorScheme.surfaceContainerHighest,
+                          color: t.surface2,
                           child: Icon(Icons.image_not_supported_outlined,
-                              size: 14, color: theme.disabledColor),
+                              size: 14, color: t.textFaint),
                         ),
                       ),
               ),
@@ -516,14 +638,15 @@ class _EntryRowState extends State<_EntryRow>
                     style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
+                      height: 1.2,
                       color: t.text,
                     ),
                   ),
                   Text(
-                    '${e.snapSetCode.toUpperCase()} · ${e.snapCollector}',
+                    meta,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: PickerTokens.mono(context, size: 10.5),
+                    style: PickerTokens.mono(context, size: 10),
                   ),
                   const SizedBox(height: 3),
                   AttributeChips(
@@ -531,24 +654,20 @@ class _EntryRowState extends State<_EntryRow>
                     language: e.language,
                     condition: e.condition,
                     defaults: ScanDefaults.current,
-                    deviationsOnly: true,
                   ),
                 ],
               ),
             ),
-            const SizedBox(width: 8),
-            if (widget.showStepper)
-              _Stepper(
-                quantity: e.quantity,
-                onChanged: widget.onSetQty,
-              )
+            const SizedBox(width: 6),
+            if (widget.peek)
+              _Stepper(quantity: e.quantity, onChanged: widget.onSetQty)
             else
               Text(
                 '${e.quantity}×',
                 style: PickerTokens.mono(
                   context,
-                  size: 13,
-                  weight: FontWeight.w600,
+                  size: 12.5,
+                  weight: FontWeight.w500,
                   color: t.textDim,
                 ),
               ),
@@ -594,9 +713,8 @@ class _Stepper extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         _IconBtn(
-          icon: quantity <= 1
-              ? Icons.delete_outline_rounded
-              : Icons.remove_rounded,
+          icon:
+              quantity <= 1 ? Icons.delete_outline_rounded : Icons.remove_rounded,
           tooltip: quantity <= 1 ? 'Remove' : 'One fewer',
           danger: quantity <= 1,
           onTap: () => onChanged(quantity - 1),
@@ -609,7 +727,7 @@ class _Stepper extends StatelessWidget {
               style: PickerTokens.mono(
                 context,
                 size: 13,
-                weight: FontWeight.w600,
+                weight: FontWeight.w500,
                 color: t.text,
               ),
             ),
@@ -631,6 +749,7 @@ class _IconBtn extends StatelessWidget {
   final String tooltip;
   final bool active;
   final bool danger;
+  final bool small;
   final VoidCallback onTap;
 
   const _IconBtn({
@@ -639,6 +758,7 @@ class _IconBtn extends StatelessWidget {
     required this.onTap,
     this.active = false,
     this.danger = false,
+    this.small = false,
   });
 
   @override
@@ -649,6 +769,7 @@ class _IconBtn extends StatelessWidget {
         : active
             ? (t.ground, t.accent, t.accent)
             : (t.text, t.surface2, t.line);
+    final size = small ? 32.0 : 38.0;
 
     return Tooltip(
       message: tooltip,
@@ -656,35 +777,37 @@ class _IconBtn extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(9),
         child: Container(
-          width: 32,
-          height: 32,
+          width: size,
+          height: size,
           decoration: BoxDecoration(
             color: bg,
             border: Border.all(color: border),
             borderRadius: BorderRadius.circular(9),
           ),
-          child: Icon(icon, size: 16, color: fg),
+          child: Icon(icon, size: small ? 15 : 18, color: fg),
         ),
       ),
     );
   }
 }
 
-/// An outlined accent action — "Cut to", "Copy to".
+/// An outlined accent action — "Manual add", "Cut to", "Copy to".
 class _TextBtn extends StatelessWidget {
   final String label;
+  final bool wide;
   final VoidCallback onTap;
 
-  const _TextBtn({required this.label, required this.onTap});
+  const _TextBtn({required this.label, required this.onTap, this.wide = false});
 
   @override
   Widget build(BuildContext context) {
     final t = PickerTokens.of(context);
-    return InkWell(
+    final button = InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(PickerTokens.radiusSmall),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        alignment: wide ? Alignment.center : null,
         decoration: BoxDecoration(
           border: Border.all(color: t.accent),
           borderRadius: BorderRadius.circular(PickerTokens.radiusSmall),
@@ -699,5 +822,6 @@ class _TextBtn extends StatelessWidget {
         ),
       ),
     );
+    return wide ? SizedBox(width: double.infinity, child: button) : button;
   }
 }

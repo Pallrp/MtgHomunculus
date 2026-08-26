@@ -22,7 +22,14 @@ import 'card_picker.dart';
 /// change made in the same breath.
 class VariantEditor extends StatefulWidget {
   final int listId;
-  final String cardId;
+
+  /// The card's name. The editor spans every printing of it — a copy differing
+  /// only by edition is still a variant of the same card.
+  final String name;
+
+  /// The printing a newly added variant starts on.
+  final VariantPrinting base;
+
   final CollectionDatabase db;
 
   /// Needed for Change Edition, which lists and searches printings.
@@ -32,7 +39,8 @@ class VariantEditor extends StatefulWidget {
   const VariantEditor({
     super.key,
     required this.listId,
-    required this.cardId,
+    required this.name,
+    required this.base,
     required this.db,
     required this.cards,
     this.imageUpdatedAt,
@@ -41,7 +49,8 @@ class VariantEditor extends StatefulWidget {
   static Future<bool?> show(
     BuildContext context, {
     required int listId,
-    required String cardId,
+    required String name,
+    required VariantPrinting base,
     required CollectionDatabase db,
     required CardsDatabase cards,
     int? imageUpdatedAt,
@@ -52,7 +61,8 @@ class VariantEditor extends StatefulWidget {
         useSafeArea: true,
         builder: (_) => VariantEditor(
           listId: listId,
-          cardId: cardId,
+          name: name,
+          base: base,
           db: db,
           cards: cards,
           imageUpdatedAt: imageUpdatedAt,
@@ -80,7 +90,8 @@ class _VariantEditorState extends State<VariantEditor> {
   /// That is what makes Save a *rewrite* rather than a diff the caller has to
   /// compute — see [CollectionDatabase.setVariantsFor].
   Future<void> _load() async {
-    final existing = await widget.db.entriesForCard(widget.listId, widget.cardId);
+    final existing =
+        await widget.db.entriesForCardName(widget.listId, widget.name);
     if (!mounted) return;
     setState(() {
       _sample = existing.isEmpty ? null : existing.first;
@@ -108,6 +119,10 @@ class _VariantEditorState extends State<VariantEditor> {
           language: last?.language ?? ScanDefaults.current.language,
           condition: last?.condition ?? ScanDefaults.current.condition,
           quantity: 1,
+          // A new variant starts on whatever printing the row above names, so
+          // adding one to a card whose rows have all moved edition does not
+          // silently drop back to the original.
+          printing: last?.printing ?? widget.base,
         ),
       ];
     });
@@ -125,15 +140,7 @@ class _VariantEditorState extends State<VariantEditor> {
       _remove(i);
       return;
     }
-    _replace(
-      i,
-      VariantEdit(
-        finish: row.finish,
-        language: row.language,
-        condition: row.condition,
-        quantity: next,
-      ),
-    );
+    _replace(i, row.copyWith(quantity: next));
   }
 
   /// Tapping a row opens it as its own detail sheet.
@@ -147,13 +154,7 @@ class _VariantEditorState extends State<VariantEditor> {
     final edited = await VariantDetailSheet.show(
       context,
       initial: _rows[i],
-      basePrinting: (
-        cardId: widget.cardId,
-        name: sample.snapName,
-        setCode: sample.snapSetCode,
-        setName: sample.snapSetName,
-        collectorNumber: sample.snapCollector,
-      ),
+      basePrinting: widget.base,
       cards: widget.cards,
       imageUpdatedAt: widget.imageUpdatedAt,
     );
@@ -170,12 +171,9 @@ class _VariantEditorState extends State<VariantEditor> {
     setState(() => _saving = true);
     await widget.db.setVariantsFor(
       listId: widget.listId,
-      cardId: widget.cardId,
+      name: widget.name,
       wanted: _rows,
-      name: sample.snapName,
-      setCode: sample.snapSetCode,
-      setName: sample.snapSetName,
-      collectorNumber: sample.snapCollector,
+      base: widget.base,
     );
     if (mounted) Navigator.of(context).pop(true);
   }
@@ -772,9 +770,7 @@ class _ConditionField extends StatelessWidget {
           value: value,
           items: Condition.all,
           labelOf: Condition.label,
-          // The one place a dropdown carries the condition ramp's warn colour,
-          // so a played card reads as played before it is opened.
-          warn: value != Condition.nearMint,
+          severity: value,
           onChanged: onChanged,
         ),
       );
@@ -785,24 +781,29 @@ class _Dropdown<T> extends StatelessWidget {
   final List<T> items;
   final String Function(T) labelOf;
   final void Function(T) onChanged;
-  final bool warn;
+
+  /// The condition this dropdown holds, when it holds one.
+  final int? severity;
 
   const _Dropdown({
     required this.value,
     required this.items,
     required this.labelOf,
     required this.onChanged,
-    this.warn = false,
+    this.severity,
   });
 
   @override
   Widget build(BuildContext context) {
     final t = PickerTokens.of(context);
+    // Carries the condition ramp's own colour, so a played card reads as played
+    // before the dropdown is opened.
+    final ramp = severity == null ? null : t.condition(severity!);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 1),
       decoration: BoxDecoration(
-        color: warn ? t.warnBg : null,
-        border: Border.all(color: warn ? t.warn : t.line),
+        color: ramp?.$2,
+        border: Border.all(color: ramp?.$1 ?? t.line),
         borderRadius: BorderRadius.circular(PickerTokens.radiusSmall),
       ),
       child: DropdownButtonHideUnderline(
@@ -812,7 +813,7 @@ class _Dropdown<T> extends StatelessWidget {
           style: PickerTokens.mono(
             context,
             size: 12,
-            color: warn ? t.warn : t.textDim,
+            color: ramp?.$1 ?? t.textDim,
           ),
           items: [
             for (final i in items)

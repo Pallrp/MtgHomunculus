@@ -176,21 +176,30 @@ void main() {
     late int listId;
     setUp(() async => listId = (await db.ensureDefaultList()).id);
 
+    const base = (
+      cardId: 'c1',
+      name: 'Swamp',
+      setCode: 'm21',
+      setName: 'Core Set 2021',
+      collectorNumber: '267',
+    );
+
     Future<void> apply(List<VariantEdit> wanted) => db.setVariantsFor(
           listId: listId,
-          cardId: 'c1',
-          wanted: wanted,
           name: 'Swamp',
-          setCode: 'm21',
-          setName: 'Core Set 2021',
-          collectorNumber: '267',
+          wanted: wanted,
+          base: base,
         );
+
+    /// What the editor actually opens on — every copy of the name, across
+    /// printings.
+    Future<List<Entry>> variants() => db.entriesForCardName(listId, 'Swamp');
 
     test('the editor prepopulates from what the list already holds', () async {
       await add(listId, quantity: 4);
       await add(listId, finish: Finish.foil, quantity: 2);
 
-      final existing = await db.entriesForCard(listId, 'c1');
+      final existing = await variants();
       final prefill = existing.map(VariantEdit.of).toList();
 
       expect(prefill, hasLength(2));
@@ -204,11 +213,11 @@ void main() {
       // become one.
       await add(listId, quantity: 4);
       await add(listId, finish: Finish.foil, quantity: 2);
-      final before = await db.entriesForCard(listId, 'c1');
+      final before = await variants();
 
       await apply(before.map(VariantEdit.of).toList());
 
-      final after = await db.entriesForCard(listId, 'c1');
+      final after = await variants();
       expect(after, hasLength(2));
       expect(after.map((e) => e.quantity).toList()..sort(), [2, 4]);
     });
@@ -219,7 +228,7 @@ void main() {
 
       await apply([const VariantEdit(finish: Finish.nonfoil)]);
 
-      final rows = await db.entriesForCard(listId, 'c1');
+      final rows = await variants();
       expect(rows, hasLength(1));
       expect(rows.single.finish, Finish.nonfoil);
     });
@@ -232,7 +241,7 @@ void main() {
         const VariantEdit(finish: Finish.etched, quantity: 3),
       ]);
 
-      final rows = await db.entriesForCard(listId, 'c1');
+      final rows = await variants();
       expect(rows, hasLength(2));
       expect(rows.firstWhere((e) => e.finish == Finish.etched).quantity, 3);
     });
@@ -248,7 +257,7 @@ void main() {
         const VariantEdit(finish: Finish.foil),
       ]);
 
-      final kept = (await db.entriesForCard(listId, 'c1'))
+      final kept = (await variants())
           .firstWhere((e) => e.finish == Finish.nonfoil);
       expect(kept.id, id, reason: 'the same row, not a delete and re-add');
       expect(kept.addedAt, original);
@@ -257,20 +266,31 @@ void main() {
     test('an explicit quantity is written', () async {
       await add(listId, quantity: 4);
       await apply([const VariantEdit(finish: Finish.nonfoil, quantity: 9)]);
-      expect((await db.entriesForCard(listId, 'c1')).single.quantity, 9);
+      expect((await variants()).single.quantity, 9);
     });
 
     test('clearing every variant empties the card from the list', () async {
       await add(listId, quantity: 4);
       await add(listId, finish: Finish.foil);
       await apply(const []);
-      expect(await db.entriesForCard(listId, 'c1'), isEmpty);
+      expect(await variants(), isEmpty);
     });
 
-    test('a variant changed to another printing moves lists rows', () async {
-      // The editor holds every copy of one card. Changing a row's edition takes
-      // it out of that card's variant set and makes it an entry of the printing
-      // it now names.
+    test('the editor spans printings, not one of them', () async {
+      // The bug this replaced: opening the editor showed only variants of the
+      // exact printing, so a row moved to another edition vanished from it.
+      await add(listId, quantity: 2);
+      await add(listId, cardId: 'c2', set: 'lci', num: '285');
+
+      final rows = await variants();
+      expect(rows, hasLength(2));
+      expect(rows.map((e) => e.snapSetCode), containsAll(['m21', 'lci']));
+    });
+
+    test('a variant changed to another printing keeps its place in the set',
+        () async {
+      // It stops being an entry of the printing it started on, but it is still
+      // a variant of the same card — which is why the set is keyed by name.
       await add(listId, quantity: 2);
 
       await apply([
@@ -287,13 +307,17 @@ void main() {
       ]);
 
       expect(await db.entriesForCard(listId, 'c1'), isEmpty,
-          reason: 'it is no longer a variant of the card it started on');
-      final moved = (await db.entriesForCard(listId, 'c2')).single;
+          reason: 'it is no longer an entry of the printing it left');
+      final moved = (await variants()).single;
+      expect(moved.cardId, 'c2');
       expect(moved.snapSetCode, 'lci');
       expect(moved.snapCollector, '285');
     });
 
-    test('a moved variant merges into an entry that already exists', () async {
+    test('a quantity on a moved row is absolute, not added to what was there',
+        () async {
+      // The editor hands back the desired final state. Saying "3" about a
+      // variant means three copies, not three more — a rewrite, not a delta.
       await add(listId, quantity: 2);
       await add(listId, cardId: 'c2', set: 'lci', num: '285', quantity: 1);
 
@@ -311,9 +335,10 @@ void main() {
         ),
       ]);
 
-      final rows = await db.entriesForCard(listId, 'c2');
-      expect(rows, hasLength(1));
-      expect(rows.single.quantity, 4);
+      final rows = await variants();
+      expect(rows, hasLength(1),
+          reason: 'the row it left is gone; the one it joined survives');
+      expect(rows.single.quantity, 3);
     });
 
     test('other cards in the list are untouched', () async {

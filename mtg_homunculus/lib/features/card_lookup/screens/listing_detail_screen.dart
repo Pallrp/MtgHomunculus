@@ -7,6 +7,7 @@ import '../data/cards_database.dart';
 import '../data/collection_database.dart';
 import '../models/scan_defaults.dart';
 import '../models/scryfall_card.dart';
+import '../widgets/card_picker.dart';
 import '../widgets/listing_sheet.dart';
 import '../services/csv_exporter.dart';
 import 'card_detail_screen.dart';
@@ -37,14 +38,20 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
   // card row — but it is expressed in pixels and converted per device, because
   // a fixed fraction of screen height puts the row behind the system navigation
   // bar on anything with one.
-  static const double _peekContentPx   = 150.0;
   static const double _maxSheetSize    = 0.88;
 
+  /// The peek height, as a fraction of *this* screen.
+  ///
+  /// Structural in pixels — the chevron's lower half plus one row, which the
+  /// artifact measures at ~93 dp — plus whatever the system navigation bar
+  /// takes. A fixed fraction cannot know about a nav bar, which is how the peek
+  /// row ended up drawn behind one.
   double _minSheetSize(BuildContext context) {
     final media = MediaQuery.of(context);
-    final size = (_peekContentPx + media.viewPadding.bottom) / media.size.height;
+    final size = (ListingSheet.peekContent + media.viewPadding.bottom + 8) /
+        media.size.height;
     // Never let it exceed the expanded size on a very short screen.
-    return size.clamp(0.10, _maxSheetSize - 0.05);
+    return size.clamp(0.08, _maxSheetSize - 0.05);
   }
 
   /// Camera is active only when the sheet is at or near its minimum size.
@@ -63,6 +70,8 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
 
   EntrySort    _sort          = EntrySort.scanned;
   Set<int>     _selected      = const {};
+  SlotMode     _slotMode      = SlotMode.manualAdd;
+  String       _query         = '';
 
   /// The row to pulse: a frame was discarded because this card is already the
   /// last one added. Cleared on a timer so a later discard re-triggers it.
@@ -185,6 +194,28 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
   // ---------------------------------------------------------------------------
 
   Future<void> _deleteCard(int entryId) => _db.removeEntry(entryId);
+
+  /// The scanner never saw it — the picker's full-screen scope.
+  Future<void> _manualAdd() async {
+    final picked = await CardPicker.showScreen(context, db: _cards);
+    if (picked == null || !mounted) return;
+    final set = await (_cards.select(_cards.sets)
+          ..where((x) => x.code.equals(picked.card.setCode)))
+        .getSingleOrNull();
+    final d = ScanDefaults.current;
+    await _db.addCard(
+      listId: widget.listId,
+      cardId: picked.card.id,
+      name: picked.card.name,
+      setCode: picked.card.setCode,
+      setName: set?.name ?? picked.card.setCode.toUpperCase(),
+      collectorNumber: picked.card.collectorNumber,
+      finish: d.finishFor(picked.card.finishes),
+      language: d.language,
+      condition: d.condition,
+      quantity: picked.quantity < 1 ? 1 : picked.quantity,
+    );
+  }
 
   /// Cut or copy the selection into another list.
   Future<void> _moveTo(Set<int> ids, bool move) async {
@@ -328,8 +359,13 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
               onCardTap:        (entry) => _openDetail(entry.id),
               onCapture:        () => _scannerKey.currentState?.capture(),
               onExportCsv:      _exportCsv,
+              onManualAdd:      _manualAdd,
               sort:             _sort,
               onSortChanged:    (s) => setState(() => _sort = s),
+              query:            _query,
+              onQueryChanged:   (q) => setState(() => _query = q),
+              slotMode:         _slotMode,
+              onSlotModeChanged: (m) => setState(() => _slotMode = m),
               selected:         _selected,
               onSelectionChanged: (s) => setState(() => _selected = s),
               onMoveTo:         _moveTo,
