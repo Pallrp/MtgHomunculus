@@ -76,11 +76,13 @@ class DuplicateGuard {
     return next.candidateNames.every((n) => n == last);
   }
 
-  /// Arm the slot with the card that was just acted on.
+  /// Arm the slot with the card that was just **added**.
   ///
-  /// Called when a card is added **and** when the user skips one out of Choose
-  /// Version — skipping has to mean "not this one, keep scanning" rather than
-  /// "ask me again in three hundred milliseconds".
+  /// Adding is the only thing that arms it. Skipping out of Choose Version
+  /// deliberately arms nothing: the reason to skip is usually a bad read the
+  /// user wants to retry, and locking the card out until something else is
+  /// scanned is backwards from what skipping is for. What stops the picker
+  /// re-opening instead is that detection pauses for its whole lifetime.
   ///
   /// Only the resolved card's name is stored, never the candidates it was picked
   /// from: choosing one Swamp out of nine says something about that card, not

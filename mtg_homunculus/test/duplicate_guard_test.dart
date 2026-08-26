@@ -100,10 +100,14 @@ void main() {
       expect(guard.lastName, 'Swamp');
     });
 
-    test('skipping arms the slot too, so the picker does not reopen', () {
-      // "Skip" has to mean "keep scanning", not "ask me again in 300ms".
+    test('a skip arms nothing — the guard is simply not told', () {
+      // Skipping leaves the slot as it was, so the card can be retried straight
+      // away. What stops the picker re-opening is the paused detection in
+      // ScannerOverlay, not this class.
       guard.remember(fp('Swamp'));
-      expect(guard.isDuplicate(fp('Swamp')), isTrue);
+      expect(guard.lastName, 'Swamp');
+      expect(guard.isDuplicate(fp('Attercop')), isFalse,
+          reason: 'a skipped card never reaches the slot');
     });
   });
 

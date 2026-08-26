@@ -98,9 +98,13 @@ class ScanPipeline {
       if (onAmbiguous != null) {
         final picked = await onAmbiguous(id.candidates);
         if (picked == null) {
-          // Skipped. Remembered anyway, or the card still in frame re-prompts on
-          // the next frame and "skip" becomes unusable.
-          guard?.remember(ScanFingerprint.of(id, best));
+          // Skipped, and the slot is deliberately left empty. Arming it here
+          // would lock the card out until something else was scanned, when the
+          // reason to skip is usually a bad read the user wants to retry.
+          //
+          // The picker does not immediately re-open, because detection is
+          // paused for its whole lifetime: the user reangles the card while it
+          // is up, and on close the next frame is genuinely a new view.
           return FailedResult(border, id.ocrText);
         }
         best = picked;

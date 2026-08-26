@@ -157,6 +157,19 @@ class ScannerOverlayState extends State<ScannerOverlay> {
   /// Stops one card being added on every frame it stays in view.
   final _guard = DuplicateGuard();
 
+  /// Choose Version is on screen, and detection is suspended.
+  ///
+  /// Identification is already blocked while the picker awaits — the capture
+  /// that opened it has not returned — but detection is not, and it would keep
+  /// running at 2fps behind a sheet covering the screen.
+  ///
+  /// The point is not the saved work. It is that **nothing computed before the
+  /// user answered survives the answer**: the card gets reangled while the
+  /// picker is up, so on close the next frame is a genuinely new view rather
+  /// than a queued verdict on the old one. The ~700ms of detect-then-identify
+  /// that follows is the breathing room, and needs no artificial delay.
+  bool _promptOpen = false;
+
   /// Outcome colour for the border, and when it expires.
   ///
   /// Separate from [_lastResult], which drives the result chip and lives for
@@ -322,6 +335,9 @@ class ScannerOverlayState extends State<ScannerOverlay> {
     _canProcess = true;
     _controller!.startImageStream((CameraImage frame) async {
       if (!_canProcess || !mounted) return;
+      // The user is answering a question. Detecting behind the sheet would queue
+      // up a verdict on a view they are in the middle of changing.
+      if (_promptOpen) return;
       _canProcess = false;
       _lastFrame  = frame;
 
@@ -656,8 +672,22 @@ class ScannerOverlayState extends State<ScannerOverlay> {
         onCardAdded: widget.onCardAdded,
         onAmbiguous: (candidates) async {
           if (!mounted) return null;
-          return ChooseVersionSheet.show(context,
-              candidates: candidates, db: db);
+          setState(() {
+            _promptOpen = true;
+            // Drop the geometry the question was asked about. It stops a stale
+            // border painting when the sheet closes, and makes the manual
+            // capture button a no-op until a real frame arrives rather than
+            // firing on a quad from before the answer.
+            _liveRects = const [];
+          });
+          try {
+            return await ChooseVersionSheet.show(context,
+                candidates: candidates, db: db);
+          } finally {
+            // A `finally`, so this lifts on a pick, a skip, and a back-gesture
+            // dismissal alike.
+            if (mounted) setState(() => _promptOpen = false);
+          }
         },
         guard: _guard,
         onResult: (i, result) {
