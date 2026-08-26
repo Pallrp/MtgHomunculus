@@ -7,10 +7,10 @@ import '../data/cards_database.dart';
 import '../data/collection_database.dart';
 import '../models/scan_defaults.dart';
 import '../models/scryfall_card.dart';
-import '../widgets/attribute_chips.dart';
+import '../widgets/listing_sheet.dart';
 import '../services/csv_exporter.dart';
 import 'card_detail_screen.dart';
-import '../widgets/scanner_overlay.dart' show ScannerOverlay, ScannerOverlayState, CaptureButton;
+import '../widgets/scanner_overlay.dart' show ScannerOverlay, ScannerOverlayState;
 
 // ---------------------------------------------------------------------------
 // Screen
@@ -35,7 +35,6 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
   // _minSheetSize must fit: button-half (34 px) + title row + divider + a
   // small peek of the card list below.
   static const double _minSheetSize    = 0.14;
-  static const double _midSheetSize    = 0.50;
   static const double _maxSheetSize    = 0.88;
   // Camera is active only when the sheet is at or near its minimum size.
   static const double _activeThreshold = _minSheetSize + 0.03;
@@ -49,6 +48,13 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
   bool         _loading       = true;
   bool         _cameraActive  = true;
   bool         _detecting     = false;   // drives capture-button green tint
+
+  EntrySort    _sort          = EntrySort.scanned;
+  Set<int>     _selected      = const {};
+
+  /// The row to pulse: a frame was discarded because this card is already the
+  /// last one added. Cleared on a timer so a later discard re-triggers it.
+  int?         _pulseEntryId;
 
   // ---------------------------------------------------------------------------
   // Init / dispose
@@ -168,6 +174,65 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
 
   Future<void> _deleteCard(int entryId) => _db.removeEntry(entryId);
 
+  /// Cut or copy the selection into another list.
+  Future<void> _moveTo(Set<int> ids, bool move) async {
+    final target = await _pickList(exclude: widget.listId);
+    if (target == null) return;
+    await (move ? _db.cutTo(ids, target) : _db.copyTo(ids, target));
+    if (mounted) setState(() => _selected = const {});
+  }
+
+  Future<void> _deleteSelected(Set<int> ids) async {
+    for (final id in ids) {
+      await _db.removeEntry(id);
+    }
+    if (mounted) setState(() => _selected = const {});
+  }
+
+  /// Destination picker — what the trailing preposition in "Cut to" promises.
+  Future<int?> _pickList({required int exclude}) async {
+    final lists = (await _db.allLists()).where((l) => l.id != exclude).toList();
+    if (!mounted || lists.isEmpty) return null;
+    return showModalBottomSheet<int>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            for (final l in lists)
+              ListTile(
+                title: Text(l.name),
+                onTap: () => Navigator.of(sheetContext).pop(l.id),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// A discarded frame reaches the sheet as a pulse on the row it concerns.
+  ///
+  /// Matched by printing rather than entry id, because a discarded frame was
+  /// never added and so has no entry of its own — the row it belongs to is
+  /// whichever one already holds that card.
+  void _onDuplicate(ScryfallCard card) {
+    for (final e in _entries) {
+      if (e.cardId == card.scryfallId) {
+        _pulse(e.id);
+        return;
+      }
+    }
+  }
+
+  void _pulse(int entryId) {
+    setState(() => _pulseEntryId = entryId);
+    Future.delayed(const Duration(milliseconds: 700), () {
+      if (mounted && _pulseEntryId == entryId) {
+        setState(() => _pulseEntryId = null);
+      }
+    });
+  }
+
   /// Zero deletes — see [CollectionDatabase.setQuantity].
   Future<void> _setQuantity(int entryId, int qty) =>
       _db.setQuantity(entryId, qty);
@@ -221,6 +286,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
               onEntryTapped:      _openDetail,
               onDetectionChanged: (d) => setState(() => _detecting     = d),
               onIdle:             _onScannerIdle,
+              onDuplicate:        _onDuplicate,
             ),
           ),
 
@@ -231,8 +297,10 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
             minChildSize:     _minSheetSize,
             maxChildSize:     _maxSheetSize,
             snap:             true,
-            snapSizes:        const [_minSheetSize, _midSheetSize, _maxSheetSize],
-            builder: (context, scrollController) => _ListingPanel(
+            // Peek and full only. A third stop would need its own answer to
+            // "is the camera on?", which nobody could predict.
+            snapSizes:        const [_minSheetSize, _maxSheetSize],
+            builder: (context, scrollController) => ListingSheet(
               listName:         _list!.name,
               entries:          _entries,
               scrollController: scrollController,
@@ -240,11 +308,18 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
               minSheetSize:     _minSheetSize,
               cameraActive:     _cameraActive,
               detecting:        _detecting,
+              pulseEntryId:     _pulseEntryId,
               onDeleteCard:     _deleteCard,
               onSetQuantity:    _setQuantity,
-              onCardTap: (entry) => _openDetail(entry.id),
-              onCapture: () => _scannerKey.currentState?.capture(),
-              onExportCsv: _exportCsv,
+              onCardTap:        (entry) => _openDetail(entry.id),
+              onCapture:        () => _scannerKey.currentState?.capture(),
+              onExportCsv:      _exportCsv,
+              sort:             _sort,
+              onSortChanged:    (s) => setState(() => _sort = s),
+              selected:         _selected,
+              onSelectionChanged: (s) => setState(() => _selected = s),
+              onMoveTo:         _moveTo,
+              onDeleteSelected: _deleteSelected,
             ),
           ),
 
@@ -270,388 +345,4 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
       ),
     );
   }
-}
-
-// ---------------------------------------------------------------------------
-// Listing panel (bottom sheet content)
-// ---------------------------------------------------------------------------
-
-class _ListingPanel extends StatelessWidget {
-  final String                             listName;
-  final List<Entry>                        entries;
-  final ScrollController                   scrollController;
-  final DraggableScrollableController      sheetController;
-  final double                             minSheetSize;
-  final bool                               cameraActive;
-  final bool                               detecting;
-  final Future<void> Function(int id)           onDeleteCard;
-  final Future<void> Function(int id, int qty)  onSetQuantity;
-  final void Function(Entry entry)              onCardTap;
-  final VoidCallback                            onCapture;
-  final VoidCallback                            onExportCsv;
-
-  /// Total copies, which is not the row count as soon as anything is held in
-  /// multiples.
-  int get _copies => entries.fold(0, (n, e) => n + e.quantity);
-
-  const _ListingPanel({
-    required this.listName,
-    required this.entries,
-    required this.scrollController,
-    required this.sheetController,
-    required this.minSheetSize,
-    required this.cameraActive,
-    required this.detecting,
-    required this.onDeleteCard,
-    required this.onSetQuantity,
-    required this.onCardTap,
-    required this.onCapture,
-    required this.onExportCsv,
-  });
-
-  // Half the CaptureButton height — the button straddles this offset so its
-  // top half floats in the camera feed and its bottom half rests on the surface.
-  static const double _buttonHalf = 34.0;
-
-  // ── Camera-button helpers ─────────────────────────────────────────────────
-
-  IconData get _cameraIcon {
-    if (!cameraActive) return Icons.keyboard_arrow_down_rounded;
-    return Icons.camera_alt_rounded;
-  }
-
-  VoidCallback _cameraTap(BuildContext context) {
-    if (!cameraActive) {
-      return () => sheetController.animateTo(
-            minSheetSize,
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeOut,
-          );
-    }
-    return onCapture;
-  }
-
-  // ── Build ─────────────────────────────────────────────────────────────────
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-
-    return Stack(
-      children: [
-        // ── Sheet surface ─────────────────────────────────────────────────
-        // Starts at the button's vertical centre so the button straddles the
-        // rounded top edge: bottom half on the surface, top half above it
-        // (camera feed visible through the transparent Stack area).
-        //
-        // Dragging works naturally: the entire CustomScrollView is wired to
-        // the DraggableScrollableSheet's scrollController, so overscrolling
-        // anywhere — header or card list — expands / collapses the sheet.
-        Positioned(
-          top: _buttonHalf, left: 0, right: 0, bottom: 0,
-          child: SafeArea(
-            top: false,
-            left: false,
-            right: false,
-            child: Container(
-              clipBehavior: Clip.antiAlias,
-              decoration: BoxDecoration(
-                color:        cs.surface,
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-                boxShadow:    const [BoxShadow(color: Colors.black38, blurRadius: 10)],
-              ),
-              child: CustomScrollView(
-                controller: scrollController,
-                slivers: [
-                // Header — top padding clears the button's lower half so the
-                // title text never hides behind it.
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(16, _buttonHalf, 16, 8),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            listName,
-                            style:    Theme.of(context).textTheme.titleMedium,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        Text(
-                          '$_copies copy(s)',
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(color: cs.onSurfaceVariant),
-                        ),
-                        const SizedBox(width: 8),
-                        IconButton(
-                          icon:      const Icon(Icons.share_rounded),
-                          tooltip:   'Export as CSV',
-                          onPressed: entries.isNotEmpty ? onExportCsv : null,
-                          constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-                          padding:   EdgeInsets.zero,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-
-                const SliverToBoxAdapter(child: Divider(height: 1)),
-
-                // Card list or empty-state placeholder.
-                if (entries.isEmpty)
-                  SliverFillRemaining(
-                    child: Center(
-                      child: Text(
-                        'No cards yet — scan to add.',
-                        style: Theme.of(context).textTheme.bodyMedium
-                            ?.copyWith(color: cs.onSurfaceVariant),
-                      ),
-                    ),
-                  )
-                else
-                  SliverList(
-                    delegate: SliverChildBuilderDelegate(
-                      (_, index) {
-                        if (index.isOdd) return const Divider(height: 1);
-                        final entry = entries[index ~/ 2];
-                        return _ListingCardRow(
-                          entry:    entry,
-                          onTap:    () => onCardTap(entry),
-                          onDelete: () => onDeleteCard(entry.id),
-                          onSetQty: (qty) => onSetQuantity(entry.id, qty),
-                        );
-                      },
-                      childCount: entries.length * 2 - 1,
-                    ),
-                  ),
-              ],
-              ),
-            ),
-          ),
-        ),
-
-        // ── Capture button ────────────────────────────────────────────────
-        // Positioned at top: 0 so its centre sits exactly on the container's
-        // top edge.  Tap-only — dragging is handled by the CustomScrollView.
-        Positioned(
-          top: 0, left: 0, right: 0,
-          child: Center(
-            child: CaptureButton(
-              detecting: detecting && cameraActive,
-              onTap:     _cameraTap(context),
-              icon:      _cameraIcon,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Listing card row
-// ---------------------------------------------------------------------------
-
-class _ListingCardRow extends StatelessWidget {
-  final Entry entry;
-  final VoidCallback onTap;
-  final VoidCallback onDelete;
-  final void Function(int qty) onSetQty;
-
-  const _ListingCardRow({
-    required this.entry,
-    required this.onTap,
-    required this.onDelete,
-    required this.onSetQty,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    // Rendered from the entry's own snapshot, not a cards.db lookup: a list has
-    // to stay readable with the card cache wiped.
-    final imageUri = ScryfallCard.imageUrlFor(entry.cardId, null, size: 'small');
-    final cs = Theme.of(context).colorScheme;
-
-    return Row(
-      children: [
-        // Qty — tappable to open qty editor.
-        SizedBox(
-          width: 48,
-          child: GestureDetector(
-            onTap: () => _showQtyDialog(context),
-            behavior: HitTestBehavior.opaque,
-            child: Center(
-              child: Text(
-                '${entry.quantity}×',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-              ),
-            ),
-          ),
-        ),
-
-        // Thumbnail + name + set info — tappable to open printing browser.
-        Expanded(
-          child: GestureDetector(
-            onTap: onTap,
-            behavior: HitTestBehavior.opaque,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              child: Row(
-                children: [
-                  // Thumbnail.
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(4),
-                    child: imageUri != null
-                        ? Image.network(
-                            imageUri,
-                            width: 36, height: 50,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, _, _) => const _PlaceholderThumb(),
-                          )
-                        : const _PlaceholderThumb(),
-                  ),
-                  const SizedBox(width: 10),
-
-                  // Name + set line.
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          entry.snapName,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.bodyMedium,
-                        ),
-                        const SizedBox(height: 2),
-                        Row(
-                          children: [
-                            Flexible(
-                              child: Text(
-                                '${entry.snapSetCode.toUpperCase()} · ${entry.snapCollector}',
-                                overflow: TextOverflow.ellipsis,
-                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                      color: cs.onSurfaceVariant,
-                                    ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 3),
-                        AttributeChips.of(entry, deviationsOnly: true),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-
-        // Delete button.
-        IconButton(
-          icon:    const Icon(Icons.delete_outline_rounded, size: 20),
-          color:   cs.error,
-          tooltip: 'Remove',
-          onPressed: onDelete,
-        ),
-      ],
-    );
-  }
-
-  Future<void> _showQtyDialog(BuildContext context) async {
-    final result = await showDialog<int>(
-      context: context,
-      builder: (_) => _QtyDialog(
-        initial:  entry.quantity,
-        cardName: entry.snapName,
-      ),
-    );
-    if (result != null) onSetQty(result);
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Qty editor dialog
-// ---------------------------------------------------------------------------
-
-class _QtyDialog extends StatefulWidget {
-  final int    initial;
-  final String cardName;
-
-  const _QtyDialog({required this.initial, required this.cardName});
-
-  @override
-  State<_QtyDialog> createState() => _QtyDialogState();
-}
-
-class _QtyDialogState extends State<_QtyDialog> {
-  late int _qty;
-
-  @override
-  void initState() {
-    super.initState();
-    _qty = widget.initial;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(widget.cardName, overflow: TextOverflow.ellipsis),
-      content: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          IconButton(
-            icon:      const Icon(Icons.remove_rounded),
-            onPressed: _qty > 0 ? () => setState(() => _qty--) : null,
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Text(
-              '$_qty',
-              style: Theme.of(context).textTheme.headlineMedium,
-            ),
-          ),
-          IconButton(
-            icon:      const Icon(Icons.add_rounded),
-            onPressed: () => setState(() => _qty++),
-          ),
-        ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.pop(context, _qty),
-          child: Text(_qty == 0 ? 'Remove' : 'Done'),
-        ),
-      ],
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Shared small widgets
-// ---------------------------------------------------------------------------
-
-class _PlaceholderThumb extends StatelessWidget {
-  const _PlaceholderThumb();
-
-  @override
-  Widget build(BuildContext context) => Container(
-        width: 36, height: 50,
-        decoration: BoxDecoration(
-          color:        Theme.of(context).colorScheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(4),
-        ),
-        child: Icon(
-          Icons.style_outlined,
-          size: 18,
-          color: Theme.of(context).colorScheme.outline,
-        ),
-      );
 }

@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 import '../models/app_settings.dart';
 import '../models/game_tracker_settings.dart';
+import '../../card_lookup/data/collection_database.dart';
+import '../../card_lookup/models/scan_defaults.dart';
 import '../models/setting_enums.dart';
 import '../services/settings_service.dart';
 import '../widgets/log_test_dialog.dart';
@@ -42,6 +44,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.initState();
     _app = widget.app;
     _gt  = widget.gt;
+    // Settings is reachable without ever entering the card lookup, so these may
+    // not have been read yet. Without this the screen would show the built-in
+    // defaults and then write them back over the stored ones on the first edit.
+    ScanDefaults.loadCurrent().then((d) {
+      if (mounted) setState(() => _scan = d);
+    });
   }
 
   void _updateApp(AppSettings newApp) {
@@ -60,6 +68,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
         600 => HoldSensitivity.long,
         _   => HoldSensitivity.medium,
       };
+
+  ScanDefaults _scan = ScanDefaults.current;
+
+  void _updateScan(ScanDefaults next) {
+    setState(() => _scan = next);
+    ScanDefaults.setCurrent(next);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -129,6 +144,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
           },
         ),
         // TODO(settings): device permissions overview (iceboxed — permission_handler)
+
+        // A scan can see art and text; it cannot see that a card is foil,
+        // Japanese, or moderately played. Every scanned card lands on these, so
+        // someone grading a box of played cards sets the condition once instead
+        // of correcting every row afterwards.
+        _sectionHeader('Scanned cards'),
+        SettingSegment<int>(
+          label: 'Default finish',
+          // Etched is real but far too rare to default a whole collection to.
+          options: ScanDefaults.offeredFinishes,
+          labelOf: Finish.label,
+          value: ScanDefaults.offeredFinishes.contains(_scan.finish)
+              ? _scan.finish
+              : Finish.nonfoil,
+          onChanged: (v) => _updateScan(_scan.copyWith(finish: v)),
+        ),
+        SettingSegment<int>(
+          label: 'Default condition',
+          options: Condition.all,
+          labelOf: Condition.label,
+          value: _scan.condition,
+          onChanged: (v) => _updateScan(_scan.copyWith(condition: v)),
+        ),
+
         _sectionHeader('Diagnostics'),
         SettingSegment<LogLevel>(
           label: 'Diagnostic logging',

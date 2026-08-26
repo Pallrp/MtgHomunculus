@@ -79,6 +79,14 @@ class ScannerOverlay extends StatefulWidget {
   /// detected.
   final void Function(bool detecting)? onDetectionChanged;
 
+  /// Called when a frame was identified and deliberately discarded, because the
+  /// card is the one already in the last-added slot.
+  ///
+  /// The overlay reports it rather than showing anything: the row for that card
+  /// is already on screen in the sheet, and pulsing it there says "yes, still
+  /// that one" without inventing a second surface for the same fact.
+  final void Function(ScryfallCard card)? onDuplicate;
+
   /// Called once when nothing has been detected for 30 seconds.
   ///
   /// The overlay reports the condition and does nothing about it: the designed
@@ -101,6 +109,7 @@ class ScannerOverlay extends StatefulWidget {
     this.showTuningButton    = false,
     this.onDetectionChanged,
     this.onIdle,
+    this.onDuplicate,
   });
 
   @override
@@ -709,6 +718,7 @@ class ScannerOverlayState extends State<ScannerOverlay> {
             AppLogger.d('Capture: duplicate — ${result.card.name} '
                 '[${result.card.setCode.toUpperCase()} '
                 '${result.card.collectorNumber}]');
+            widget.onDuplicate?.call(result.card);
             return;
           }
           _flash(result is MatchedResult ? Colors.greenAccent : Colors.redAccent);
