@@ -9,15 +9,11 @@ ScanFingerprint fp(
   String printingId, {
   String name = 'Swamp',
   Set<String>? candidates,
-  String? set,
-  String? number,
 }) =>
     ScanFingerprint(
       printingId: printingId,
       candidateIds: candidates ?? {printingId},
       name: name,
-      printedSetCode: set,
-      printedCollectorNumber: number,
     );
 
 Card card(String id, {String name = 'Swamp', String set = 'm21', String num = '267'}) =>
@@ -44,7 +40,7 @@ void main() {
     });
   });
 
-  group('rank 2 — the printings considered', () {
+  group('the printings considered', () {
     test('the same card held in frame is rejected after the first add', () {
       // The loop fires 2-3x/second; without this one card becomes a dozen.
       guard.remember(fp('a'));
@@ -79,43 +75,49 @@ void main() {
     });
   });
 
-  group('rank 1 — printed set and collector number', () {
-    test('two printings of one card are distinct, despite shared candidates', () {
-      // Rank 1 must override a rank-2 match: same art, same candidate list,
-      // different physical cards. Rank 2 alone would drop the second.
-      final art = {'x', 'y'};
-      guard.remember(fp('x', candidates: art, set: 'lci', number: '231'));
+  group('the name backstop', () {
+    test('disjoint candidates still read as the same card', () async {
+      // dHash and the name search can return completely different candidates
+      // for one physical card — art on one side, text on the other. They still
+      // agree on what it is called.
+      guard.remember(fp('a', candidates: {'a', 'b'}));
+      expect(guard.isDuplicate(fp('x', candidates: {'x', 'y'})), isTrue);
+    });
+
+    test('a different card is still added', () {
+      guard.remember(fp('a', name: 'Swamp'));
+      expect(guard.isDuplicate(fp('b', name: 'Island')), isFalse);
+    });
+
+    test('an empty name cannot match itself into a duplicate', () {
+      guard.remember(fp('a', name: ''));
+      expect(guard.isDuplicate(fp('b', name: '')), isFalse);
+    });
+  });
+
+  group('regression — the misread set code, 2026-08-26', () {
+    test('a re-identified card does not re-prompt when its set misreads', () {
+      // Measured on device. A Swamp was added from a 1-candidate hashAndOcr
+      // match, then a later frame fell through to the name path and returned
+      // four printings all at collector 267 — the set code was what failed.
+      // The added printing is present in that list, so this is the same card;
+      // the old precedence ladder let the misread set veto the match and
+      // re-opened Choose Version on a card already in the list.
+      guard.remember(fp('m21', name: 'Swamp', candidates: {'m21'}));
+
+      final nextFrame = fp('iko',
+          name: 'Swamp', candidates: {'iko', 'snc', 'm21', 'ltr'});
+
+      expect(guard.isDuplicate(nextFrame), isTrue);
+    });
+
+    test('two printings of one card scanned in a row are rejected', () {
+      // The behaviour the old rank 1 existed to prevent, now accepted
+      // deliberately: same-art reprints share candidates and would be rejected
+      // regardless, and adding a second printing goes through Add Version.
+      guard.remember(fp('m21', name: 'Swamp', candidates: {'m21'}));
       expect(
-        guard.isDuplicate(fp('y', candidates: art, set: 'lci', number: '232')),
-        isFalse,
-      );
-    });
-
-    test('the same printed number is a duplicate', () {
-      guard.remember(fp('x', set: 'lci', number: '231'));
-      expect(guard.isDuplicate(fp('x', set: 'lci', number: '231')), isTrue);
-    });
-
-    test('a different set with the same number is distinct', () {
-      guard.remember(fp('x', candidates: {'x', 'y'}, set: 'lci', number: '231'));
-      expect(
-        guard.isDuplicate(fp('y', candidates: {'x', 'y'}, set: 'mh3', number: '231')),
-        isFalse,
-      );
-    });
-
-    test('rank 1 needs both sides — an unread band falls back to rank 2', () {
-      // Glare kills OCR on one frame but dHash still matches. That frame must
-      // not read as a new card just because its band did not parse.
-      guard.remember(fp('x', set: 'lci', number: '231'));
-      expect(guard.isDuplicate(fp('x')), isTrue);
-    });
-
-    test('a half-read band does not count as rank 1', () {
-      guard.remember(fp('x', candidates: {'x', 'y'}, set: 'lci', number: '231'));
-      // Number read, set missing → not rank 1 → rank 2 says duplicate.
-      expect(
-        guard.isDuplicate(fp('y', candidates: {'x', 'y'}, number: '232')),
+        guard.isDuplicate(fp('lci', name: 'Swamp', candidates: {'lci'})),
         isTrue,
       );
     });
@@ -135,26 +137,23 @@ void main() {
       final id = Identification(
         candidates: [card('s1'), card('s2'), chosen],
         via: IdentifiedVia.hash,
-        readSetCode: 'm21',
-        readCollectorNumber: '267',
       );
       final f = ScanFingerprint.of(id, chosen);
       expect(f.printingId, 's5');
       expect(f.candidateIds, {'s1', 's2', 's5'});
-      expect(f.hasPrinted, isTrue);
+      expect(f.name, 'Swamp');
     });
 
-    test('takes the printed fields from OCR, never from the matched row', () {
-      // The row always has a collector number. If this read it from there,
-      // rank 1 would always be available and would rank against itself.
-      final chosen = card('s5', set: 'm21', num: '267');
+    test('the pick is included even when it is not among the candidates', () {
+      // Choose Version can widen to every printing of the name, so the row the
+      // user picks need not be one the scan originally offered.
+      final chosen = card('other', name: 'Swamp');
       final id = Identification(
-        candidates: [chosen],
+        candidates: [card('s1'), card('s2')],
         via: IdentifiedVia.hash,
       );
-      final f = ScanFingerprint.of(id, chosen);
-      expect(f.hasPrinted, isFalse);
-      expect(f.printedCollectorNumber, isNull);
+      expect(ScanFingerprint.of(id, chosen).candidateIds,
+          {'s1', 's2', 'other'});
     });
   });
 }

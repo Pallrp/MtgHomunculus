@@ -3,10 +3,9 @@ import 'card_identifier.dart';
 
 /// Everything one scan established about which card it was.
 ///
-/// Built from what the scan *produced*, which is why the printed fields are
-/// nullable: a card identified by dHash through glare has a printing but no
-/// readable collector number, and treating the matched row's number as though it
-/// had been read would make the strongest signal always available.
+/// Deliberately holds no OCR-read set code or collector number. It used to, as
+/// the top of a precedence ladder, and that ladder is what made a card
+/// re-prompt on the frame its set code misread — see [DuplicateGuard.isDuplicate].
 class ScanFingerprint {
   /// The printing this scan settled on — the sole candidate, the one the user
   /// picked, or the best candidate if it was never resolved.
@@ -21,18 +20,14 @@ class ScanFingerprint {
   /// Comparing sets is what stops that from reading as a different card.
   final Set<String> candidateIds;
 
+  /// The card's name as stored, not as read. Both sides of a comparison come
+  /// from the card table, so this is exact rather than fuzzy.
   final String name;
-
-  /// Read off the card, lowercase. Null when the band did not parse.
-  final String? printedSetCode;
-  final String? printedCollectorNumber;
 
   const ScanFingerprint({
     required this.printingId,
     required this.candidateIds,
     required this.name,
-    this.printedSetCode,
-    this.printedCollectorNumber,
   });
 
   /// [chosen] is the printing to record — the user's pick where there was one,
@@ -41,23 +36,10 @@ class ScanFingerprint {
         printingId: chosen.id,
         candidateIds: {chosen.id, for (final c in id.candidates) c.id},
         name: chosen.name,
-        printedSetCode: id.readSetCode,
-        printedCollectorNumber: id.readCollectorNumber,
       );
 
-  /// Rank 1 — set code plus collector number, read from the card itself.
-  ///
-  /// Both are required. The set code is the least reliable field on a card, so
-  /// this is available less often than it looks. It exists for the one thing the
-  /// printing cannot do: tell two physically different cards apart when they
-  /// resolved to the same candidates.
-  bool get hasPrinted =>
-      printedSetCode != null && printedCollectorNumber != null;
-
   @override
-  String toString() => hasPrinted
-      ? '$name [$printedSetCode $printedCollectorNumber]'
-      : '$name [${candidateIds.length} candidate(s)]';
+  String toString() => '$name [${candidateIds.length} candidate(s)]';
 }
 
 /// Rejects the same physical card being acted on over and over.
@@ -73,6 +55,10 @@ class ScanFingerprint {
 /// Skipping has to mean "not this one, keep scanning" rather than "ask me again
 /// immediately".
 ///
+/// The same applies to a card that was *added*: the frames after it resolve on
+/// whichever path wins, and any of them may come back ambiguous. Being added is
+/// not what stops the prompt — being recognised as the previous card is.
+///
 /// **Only the immediately previous card is compared.** The window is otherwise
 /// unbounded: A held for a minute stays rejected the whole time. Scanning
 /// A -> B -> A does add A twice, which is deliberate — the user may own two
@@ -84,31 +70,51 @@ class DuplicateGuard {
 
   /// Whether [next] is the same card as the one last acted on.
   ///
-  /// **The strongest signal available on both sides decides, and a mismatch
-  /// there overrides a match on anything weaker.** Two printings of the same
-  /// card are distinct and must both be added, so overlapping candidates cannot
-  /// make something a duplicate when the collector numbers disagree.
+  /// **Either signal matching is enough; neither can veto the other.** The
+  /// design doc ranked these, with a printed set + collector mismatch
+  /// overriding a match on anything weaker. Measured on device 2026-08-26, that
+  /// was wrong, and wrong in the direction that produces the worst behaviour:
+  ///
+  /// ```
+  /// 34.16  hashAndOcr  1 candidate   Swamp   -> added
+  /// 34.81  hash        9 candidates  Swamp   -> duplicate
+  /// 35.20  hashAndOcr  1 candidate   Swamp   -> duplicate
+  /// 35.87  ocr         4 candidates  Swamp   -> PROMPTED
+  ///        iko/267, snc/267, m21/267, ltr/267
+  /// ```
+  ///
+  /// The added printing (`m21/267`) is *in* that candidate list, so the overlap
+  /// test said duplicate. The precedence rule overruled it: every candidate sat
+  /// at collector `267`, meaning the set code was the field that failed, and a
+  /// misread set code was allowed to veto a solid match. The set code is the
+  /// least reliable thing on a card — it cannot be the tiebreaker.
+  ///
+  /// What that ranking existed for was two *different* printings of one card
+  /// scanned back to back. That is deliberately not the workflow: same-art
+  /// reprints share candidates and would be rejected regardless, and adding a
+  /// second printing goes through Add Version instead.
   bool isDuplicate(ScanFingerprint next) {
     final prev = _last;
     if (prev == null) return false;
 
-    // Rank 1 — printed set + collector, on both sides.
-    if (prev.hasPrinted && next.hasPrinted) {
-      return prev.printedSetCode == next.printedSetCode &&
-          prev.printedCollectorNumber == next.printedCollectorNumber;
-    }
-
-    // Rank 2 — the printings considered.
+    // The printings considered.
     //
     // Overlap rather than equality: candidate lists shift by an entry or two
-    // between frames as the warp moves, and requiring an exact match would let
-    // a card re-add itself on the frame a candidate dropped out.
+    // between frames as the warp moves and the path changes, and requiring an
+    // exact match would let a card re-add itself on the frame a candidate
+    // dropped out.
+    if (prev.candidateIds.intersection(next.candidateIds).isNotEmpty) {
+      return true;
+    }
+
+    // The name, as a backstop for the paths disagreeing entirely.
     //
-    // The design also lists a rank 3, the OCR name. It is deliberately not
-    // implemented: a fingerprint only exists once a scan resolved to a row, so
-    // both sides always carry candidates and rank 3 can never be reached.
-    // Adding it would be dead code that reads as a working safety net.
-    return prev.candidateIds.intersection(next.candidateIds).isNotEmpty;
+    // dHash and the name search can return disjoint candidate sets for the same
+    // physical card — one matches art, the other matches text. Both still agree
+    // on what the card is *called*, and two consecutive frames naming the same
+    // card are the same card. Compared as stored, since both sides come from
+    // the card table rather than from OCR.
+    return prev.name.isNotEmpty && prev.name == next.name;
   }
 
   void remember(ScanFingerprint fp) => _last = fp;
