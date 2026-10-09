@@ -247,6 +247,11 @@ class CardsDatabase extends _$CardsDatabase {
   /// Returns names ranked by trigram overlap. Callers rerank by edit distance:
   /// BM25 is order-blind and can rank a name sharing scattered trigrams above the
   /// true match.
+  /// Fuzzy name retrieval **for OCR**, not for typed input.
+  ///
+  /// Decomposing a name into trigrams and OR-ing them is what lets a garbled
+  /// read still find its card. It is the wrong tool for a search box — see
+  /// [search].
   Future<List<String>> nameCandidates(String query, {int limit = 50}) async {
     final normalised = normaliseName(query);
     final trigrams = <String>{
@@ -286,21 +291,48 @@ class CardsDatabase extends _$CardsDatabase {
   ///
   /// Set *names* are not searchable. The set code is what the tile shows and what
   /// is printed on the card, so what a user types is what they read back.
+  /// **Literal substring matching, not the trigram index.**
+  ///
+  /// [nameCandidates] exists for OCR, where the input is garbled and a fuzzy
+  /// match is the only thing that works. A person typing is the opposite case:
+  /// they know what they are looking for, and trigram OR-matching answers `bolt`
+  /// with everything sharing a three-letter run with it. Fuzziness that rescues
+  /// a misread title is noise under a keyboard.
+  ///
+  /// Each token must appear somewhere in the name, so word order does not
+  /// matter — `bolt lightning` still finds Lightning Bolt — while nothing
+  /// matches that does not actually contain what was typed.
+  ///
+  /// Suggestions-as-you-type are a later addition and would reintroduce fuzzy
+  /// matching deliberately, on their own surface.
   Future<List<Card>> search(String query, {int limit = 60}) async {
     final parsed = await parseQuery(query);
     if (parsed.name.isEmpty) return const [];
 
-    final names = await nameCandidates(parsed.name);
-    if (names.isEmpty) return const [];
+    // `%` and `_` are LIKE wildcards and appear in no card name, so they are
+    // dropped rather than escaped — drift's `like` has no ESCAPE clause.
+    final tokens = parsed.name
+        .replaceAll(RegExp(r'[%_]'), '')
+        .split(RegExp(r'\s+'))
+        .where((t) => t.isNotEmpty)
+        .toList();
+    if (tokens.isEmpty) return const [];
 
-    final q = select(cards)..where((c) => c.name.isIn(names));
+    final q = select(cards);
+    for (final t in tokens) {
+      q.where((c) => c.name.like('%$t%'));
+    }
     if (parsed.setCode != null) {
       q.where((c) => c.setCode.equals(parsed.setCode!));
     }
-    // Newest first: for Change Version — the scope this most often opens in —
-    // the recent printing is the one someone is most likely holding.
+    // Printings of one card group together, newest first within each — so a
+    // search spanning several cards reads as a list of cards rather than a
+    // chronological jumble.
     q
-      ..orderBy([(c) => OrderingTerm.desc(c.releasedAt)])
+      ..orderBy([
+        (c) => OrderingTerm.asc(c.name),
+        (c) => OrderingTerm.desc(c.releasedAt),
+      ])
       ..limit(limit);
     return q.get();
   }

@@ -103,6 +103,29 @@ void main() {
       expect(r.map((c) => c.id), contains('hound'));
     });
 
+    test('word order does not matter', () async {
+      // Each token must appear somewhere in the name, so a typed search is
+      // forgiving about order without becoming fuzzy about spelling.
+      expect((await db.search('bolt lightning')).map((c) => c.id), ['bolt']);
+    });
+
+    test('a partial word still matches — it is a substring', () async {
+      expect((await db.search('lightnin')).map((c) => c.id), ['bolt']);
+    });
+
+    test('a misspelling finds nothing, deliberately', () async {
+      // The trigram index would rescue both of these. A search box should not:
+      // a person typing knows what they are after, and silent near-matches are
+      // noise rather than help.
+      expect(await db.search('lihgtning'), isEmpty);
+      expect(await db.search('bolf'), isEmpty);
+    });
+
+    test('printings of one card group together', () async {
+      final r = await db.search('forest');
+      expect(r.map((c) => c.name).toSet(), {'Forest'});
+    });
+
     test('nothing matching returns nothing rather than everything', () async {
       expect(await db.search('zzzqqqxxx'), isEmpty);
     });
