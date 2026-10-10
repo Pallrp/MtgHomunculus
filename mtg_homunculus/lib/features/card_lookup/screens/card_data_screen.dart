@@ -5,6 +5,7 @@ import '../data/cards_database.dart';
 import '../data/hash_index.dart';
 import '../services/card_data_updater.dart';
 import '../services/dhash.dart';
+import '../services/hash_queue.dart';
 import '../theme/picker_tokens.dart';
 
 // ---------------------------------------------------------------------------
@@ -52,12 +53,9 @@ class _CardDataScreenState extends State<CardDataScreen> {
   int? _hashEntries;
   String? _hashVersion;
 
-  /// Null while still being counted. It needs every id in the index plus every
-  /// hashable id in the table, so it is the one figure here that cannot be a
-  /// cheap `COUNT(*)` — the rest of the panel renders without waiting for it.
-  int? _notYetHashed;
 
   CardDataUpdater get _updater => CardDataUpdater.instance;
+  HashQueue get _queue => HashQueue.instance;
 
   @override
   void initState() {
@@ -104,15 +102,10 @@ class _CardDataScreenState extends State<CardDataScreen> {
       _hashVersion = index == null ? null : DHash.version;
     });
 
-    if (index == null) {
-      if (mounted) setState(() => _notYetHashed = null);
-      return;
-    }
-    final indexed = index.ids();
-    final hashable = await widget.db.hashableIds();
-    if (!mounted) return;
-    setState(() => _notYetHashed =
-        hashable.where((id) => !indexed.contains(id)).length);
+    // And the backlog last. It needs every id in the index plus every hashable
+    // id in the table, so it is the one figure here that cannot be a cheap
+    // `COUNT(*)`. Counted only on this screen, never on the way past it.
+    if (!_queue.running) await _queue.count();
   }
 
   // ---------------------------------------------------------------------------
@@ -169,16 +162,19 @@ class _CardDataScreenState extends State<CardDataScreen> {
             _Row(label: 'Unique names', value: _thousands(c?.uniqueNames)),
             _Row(label: 'Sets', value: _thousands(c?.sets)),
             _Row(label: 'Hash entries', value: _thousands(_hashEntries)),
-            _Row(
-              label: 'Not yet hashed',
-              value: _hashEntries == null && _notYetHashed == null
-                  ? 'no index'
-                  : _thousands(_notYetHashed),
-              // The row that earns its place: it is the gap between the card
-              // table and the index, and the answer to "why did the scanner not
-              // recognise this card" — a printing newer than the last index
-              // build, still falling through to OCR.
-              attention: (_notYetHashed ?? 0) > 0,
+            // The row that earns its place: it is the gap between the card
+            // table and the index, and the answer to "why did the scanner not
+            // recognise this card" — a printing newer than the last index
+            // build, still falling through to OCR.
+            ListenableBuilder(
+              listenable: _queue,
+              builder: (context, _) => _Row(
+                label: 'Not yet hashed',
+                value: _hashEntries == null
+                    ? 'no index'
+                    : _thousands(_queue.remaining),
+                attention: (_queue.remaining ?? 0) > 0,
+              ),
             ),
           ]),
           _Group(children: [
@@ -187,6 +183,11 @@ class _CardDataScreenState extends State<CardDataScreen> {
             _Row(label: 'Hash version', value: _hashVersion ?? '—'),
             _Row(label: 'Database size', value: _megabytes(_dbBytes)),
           ]),
+          ListenableBuilder(
+            listenable: _queue,
+            builder: (context, _) => _HashSection(queue: _queue),
+          ),
+
           // Update first: it is the one someone will reach for, and it is the
           // safe one. Re-download sits below it, in the destructive colour.
           ListenableBuilder(
@@ -497,5 +498,124 @@ class _Running extends StatelessWidget {
       ImportStep.inserting => '${p.count} cards',
       _ => null,
     };
+  }
+}
+
+/// The hash backlog: what it is, what it costs, and a way to start it.
+///
+/// **Informs rather than gates.** The images are small and the alternative is
+/// cards that do not scan, so there is no consent dialog — but the user should
+/// be able to see the size of what they are starting before they start it,
+/// which is possible here because both numbers are known.
+class _HashSection extends StatelessWidget {
+  final HashQueue queue;
+  const _HashSection({required this.queue});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = PickerTokens.of(context);
+    final remaining = queue.remaining;
+
+    // Nothing to say when there is no index, or nothing outstanding.
+    if (!queue.running && (remaining == null || remaining == 0)) {
+      return const SizedBox.shrink();
+    }
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: t.surface,
+        border: Border.all(color: t.line),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: queue.running ? _busy(context, t) : _idle(context, t, remaining!),
+      ),
+    );
+  }
+
+  List<Widget> _idle(BuildContext context, PickerTokens t, int remaining) => [
+        Text(
+          'Match these cards',
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            color: t.text,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          '$remaining printing${remaining == 1 ? '' : 's'} newer than the match '
+          'index have no image fingerprint, so scanning them falls back to '
+          'reading the text. Fetching one thumbnail each fixes that.',
+          style: TextStyle(fontSize: 12.5, color: t.textDim, height: 1.35),
+        ),
+        const SizedBox(height: 10),
+        Text(
+          '≈ ${_size(remaining)} to download · about '
+          '${(HashQueue.bytesPerCard / 1024).round()} KB per card',
+          style: PickerTokens.mono(context, size: 11.5)
+              .copyWith(color: t.textFaint),
+        ),
+        const SizedBox(height: 12),
+        OutlinedButton(
+          onPressed: queue.run,
+          style: OutlinedButton.styleFrom(
+            minimumSize: const Size.fromHeight(42),
+          ),
+          child: const Text('Fetch and match'),
+        ),
+      ];
+
+  List<Widget> _busy(BuildContext context, PickerTokens t) => [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                'Matching cards',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: t.text,
+                ),
+              ),
+            ),
+            Text(
+              '${queue.done}',
+              style: PickerTokens.mono(context, size: 12)
+                  .copyWith(color: t.textDim),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(2),
+          child: LinearProgressIndicator(
+            value: _fraction,
+            minHeight: 4,
+            backgroundColor: t.surface2,
+          ),
+        ),
+        const SizedBox(height: 10),
+        TextButton(
+          onPressed: queue.stop,
+          child: const Text('Stop'),
+        ),
+      ];
+
+  double? get _fraction {
+    final left = queue.remaining;
+    if (left == null) return null;
+    final total = queue.done + left;
+    return total == 0 ? null : queue.done / total;
+  }
+
+  static String _size(int cards) {
+    final mb = cards * HashQueue.bytesPerCard / (1024 * 1024);
+    return mb < 1
+        ? '${(mb * 1024).round()} KB'
+        : '${mb.toStringAsFixed(mb < 10 ? 1 : 0)} MB';
   }
 }

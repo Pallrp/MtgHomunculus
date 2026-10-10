@@ -220,11 +220,15 @@ class CardsDatabase extends _$CardsDatabase {
   /// The `image_status` filter is **not optional**: 738 of 107,323 printings have
   /// `missing` or `placeholder` art and can never be hashed. Without it they sit
   /// in the queue forever, retried on every launch, downloading nothing.
-  Future<List<Card>> unhashed(Set<String> indexed, {int limit = 500}) async {
+  /// **No cap.** It previously took `limit: 500`, which is not even one large
+  /// set once alternate printings are counted — and a count just defers the
+  /// same work to the next launch. Throughput is a fine-tuning problem, not a
+  /// correctness one.
+  Future<List<Card>> unhashed(Set<String> indexed) async {
     final rows = await (select(cards)
           ..where((c) => c.imageStatus.isBiggerOrEqualValue(2)))
         .get();
-    return rows.where((c) => !indexed.contains(c.id)).take(limit).toList();
+    return rows.where((c) => !indexed.contains(c.id)).toList();
   }
 
   /// Ids of every printing that *can* be hashed — the same `image_status`

@@ -223,20 +223,13 @@ _ChunkResult _hashChunk(List<String> paths) {
   return _ChunkResult(entries, failures);
 }
 
-/// BT.601 luma — the same weighting OpenCV's `COLOR_BGR2GRAY` uses.
+/// BT.601 luma, via the shared implementation.
 ///
-/// This has to match what the app feeds [DHash] at runtime. A different
-/// weighting shifts cell means, flips borderline gradient bits, and quietly
-/// widens every Hamming distance against the shipped index.
-Uint8List _luma(img.Image src) {
-  final w = src.width, h = src.height;
-  final out = Uint8List(w * h);
-  final rgb = src.getBytes(order: img.ChannelOrder.rgb);
-  for (var i = 0, p = 0; i < out.length; i++, p += 3) {
-    out[i] = (rgb[p] * 299 + rgb[p + 1] * 587 + rgb[p + 2] * 114) ~/ 1000;
-  }
-  return out;
-}
+/// The arithmetic lives in [DHash.lumaFromRgb] so this script and the
+/// on-device hash queue cannot drift apart — a different weighting would widen
+/// every distance against the index this very script produces, silently.
+Uint8List _luma(img.Image src) =>
+    DHash.lumaFromRgb(src.getBytes(order: img.ChannelOrder.rgb));
 
 // ---------------------------------------------------------------------------
 // Index format

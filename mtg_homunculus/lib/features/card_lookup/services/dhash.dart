@@ -71,6 +71,22 @@ class DHash {
   // Hashing
   // ---------------------------------------------------------------------------
 
+  /// BT.601 luma — the same weighting OpenCV's `COLOR_BGR2GRAY` uses.
+  ///
+  /// **One implementation on purpose.** The desktop index build and the
+  /// on-device hash queue both come through here, because a different weighting
+  /// shifts cell means, flips borderline gradient bits and quietly widens every
+  /// Hamming distance against the shipped index — with no error anywhere.
+  ///
+  /// [rgb] is tightly packed 3-bytes-per-pixel RGB.
+  static Uint8List lumaFromRgb(Uint8List rgb) {
+    final out = Uint8List(rgb.length ~/ 3);
+    for (var i = 0, p = 0; i < out.length; i++, p += 3) {
+      out[i] = (rgb[p] * 299 + rgb[p + 1] * 587 + rgb[p + 2] * 114) ~/ 1000;
+    }
+    return out;
+  }
+
   /// Hash [gray], a single-channel 8-bit image of [width] × [height].
   ///
   /// [rowStride] is the byte offset between rows; pass it when the buffer is

@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import '../../../core/logging/app_logger.dart';
 import '../data/bulk_importer.dart';
 import '../data/cards_database.dart';
+import 'hash_queue.dart';
 
 /// Which of the update control's states is showing.
 enum UpdatePhase {
@@ -225,6 +226,12 @@ class CardDataUpdater extends ChangeNotifier {
       _progress = null;
       notifyListeners();
       _outcomes.add(CardDataOutcome.updated);
+
+      // The import is what creates a backlog: whatever printings it just added
+      // have no hash. Starting straight away is the point — the user has
+      // already opted into fetching card data, and leaving the queue for them
+      // to find later would mean a week of scans silently falling back to OCR.
+      unawaited(HashQueue.instance.run());
     } catch (e, st) {
       AppLogger.w('CardDataUpdater: update failed', error: e, stackTrace: st);
       // The database is still entirely valid — the import writes by primary key
