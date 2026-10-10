@@ -8,6 +8,7 @@ import '../data/collection_database.dart';
 import '../data/hash_index.dart';
 import '../models/dev_flags.dart';
 import '../models/scan_defaults.dart';
+import '../services/card_data_updater.dart';
 import '../theme/picker_tokens.dart';
 import 'card_data_screen.dart';
 import 'card_data_setup_screen.dart';
@@ -121,6 +122,12 @@ class _ListingHomeScreenState extends State<ListingHomeScreen> {
     // scan has just failed on a card you know exists.
     unawaited(_loadCardData());
 
+    // Restores the badge from `meta` and runs the weekly ETag check if it is
+    // due. Here because this screen is the only way into the sub-app and the
+    // row that reports the result is on it. A failed check says nothing and
+    // does not advance the date.
+    unawaited(CardDataUpdater.instance.refresh());
+
     final listings = await _db.allLists();
     final counts   = await _db.countsForAll();
     if (mounted) {
@@ -231,10 +238,16 @@ class _ListingHomeScreenState extends State<ListingHomeScreen> {
         // infrastructure, not a list, and it is deliberately a row rather than a
         // gear: a gear promises options to configure, and this has a status and
         // two actions. See local_data_store.md.
-        _CardDataRow(
-          cardCount: _cardCount,
-          updatedAt: _bulkUpdatedAt,
-          onTap: _openCardData,
+        ListenableBuilder(
+          listenable: CardDataUpdater.instance,
+          builder: (context, _) => _CardDataRow(
+            cardCount: _cardCount,
+            updatedAt: _bulkUpdatedAt,
+            updateAvailable: CardDataUpdater.instance.updateAvailable,
+            updating:
+                CardDataUpdater.instance.phase == UpdatePhase.running,
+            onTap: _openCardData,
+          ),
         ),
       ],
     );
@@ -487,11 +500,15 @@ class _CardDataRow extends StatelessWidget {
 
   final int? cardCount;
   final String updatedAt;
+  final bool updateAvailable;
+  final bool updating;
   final VoidCallback onTap;
 
   const _CardDataRow({
     required this.cardCount,
     required this.updatedAt,
+    required this.updateAvailable,
+    required this.updating,
     required this.onTap,
   });
 
@@ -513,7 +530,11 @@ class _CardDataRow extends StatelessWidget {
             ),
             child: Row(
               children: [
-                Icon(Icons.inventory_2_outlined, size: 20, color: t.textDim),
+                Icon(
+                  Icons.inventory_2_outlined,
+                  size: 20,
+                  color: updateAvailable && !updating ? t.warning : t.textDim,
+                ),
                 const SizedBox(width: 14),
                 Expanded(
                   child: Column(
@@ -531,8 +552,14 @@ class _CardDataRow extends StatelessWidget {
                       const SizedBox(height: 2),
                       Text(
                         _subtitle(),
-                        style: PickerTokens.mono(context, size: 11)
-                            .copyWith(color: t.textFaint),
+                        style: PickerTokens.mono(context, size: 11).copyWith(
+                          color: updateAvailable && !updating
+                              ? t.warning
+                              : t.textFaint,
+                          fontWeight: updateAvailable && !updating
+                              ? FontWeight.w600
+                              : FontWeight.w400,
+                        ),
                       ),
                     ],
                   ),
@@ -547,6 +574,13 @@ class _CardDataRow extends StatelessWidget {
   }
 
   String _subtitle() {
+    // The badge is words, not a dot. The size is the number that decides
+    // whether now is the moment, and a dot can only say "something".
+    if (updating) return 'Updating…';
+    if (updateAvailable) {
+      return 'Update available — ${CardDataUpdater.downloadSize}';
+    }
+
     final n = cardCount;
     if (n == null) return 'Counting…';
     final parts = ['${_thousands(n)} cards'];

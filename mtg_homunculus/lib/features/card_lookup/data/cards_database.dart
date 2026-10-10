@@ -89,6 +89,13 @@ abstract final class MetaKeys {
   static const bulkCardCount = 'bulk_card_count';
   static const lastUpdatePrompted = 'last_update_prompted';
 
+  /// The remote ETag a check found to differ from [bulkEtag], or absent.
+  ///
+  /// Persisted so the "update available" mark survives a restart. Without it
+  /// the badge would vanish on relaunch and not return for a week, which is
+  /// exactly the signal the user wanted kept in front of them.
+  static const pendingEtag = 'pending_etag';
+
   /// `DHash.version` of the fetched index. Tracks the hash grid, which changes on
   /// its own schedule and silently invalidates the index when it does — a grid
   /// change produces different hashes with no error, only matches that never

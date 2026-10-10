@@ -70,10 +70,26 @@ class BulkImporter {
   static CardsCompanion? extractForTest(String line, Map<String, CardSet> sets) =>
       _extract(line, sets);
 
-  /// Run a full import, emitting progress as it goes.
+  /// Run an import, emitting progress as it goes.
   ///
   /// Does **not** decide whether an import is needed — see [remoteEtag].
-  static Stream<ImportProgress> run(CardsDatabase db) async* {
+  ///
+  /// [incremental] picks how the name index is brought up to date, and it is
+  /// the difference between an update the user can keep using the app through
+  /// and one they cannot:
+  ///
+  /// - `false` (first run, Re-download) → [CardsDatabase.rebuildNameIndex],
+  ///   which `DELETE`s the FTS table first. Faster, and the only thing that
+  ///   clears the names of renamed or withdrawn cards — but there is a window
+  ///   with no name index at all.
+  /// - `true` (Update) → [CardsDatabase.addNewNames], which only adds. Search
+  ///   keeps working throughout, at the cost of leaving a renamed card's old
+  ///   name indexed until the next full rebuild. That stale entry resolves to
+  ///   nothing rather than to the wrong card.
+  static Stream<ImportProgress> run(
+    CardsDatabase db, {
+    bool incremental = false,
+  }) async* {
     final controller = StreamController<ImportProgress>();
     final receive = ReceivePort();
     Isolate? isolate;
@@ -125,7 +141,11 @@ class BulkImporter {
           }
           if (msg is _Done) {
             controller.add(const ImportProgress(ImportStep.indexing));
-            await db.rebuildNameIndex();
+            if (incremental) {
+              await db.addNewNames();
+            } else {
+              await db.rebuildNameIndex();
+            }
 
             await db.setMeta(MetaKeys.bulkCardCount, '$inserted');
             await db.setMeta(MetaKeys.bulkEtag, msg.etag ?? '');

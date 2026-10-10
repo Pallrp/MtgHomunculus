@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
@@ -9,6 +11,7 @@ import 'core/logging/app_logger.dart';
 import 'features/card_lookup/data/cards_database.dart';
 import 'features/card_lookup/screens/card_data_setup_screen.dart';
 import 'features/card_lookup/screens/listing_home_screen.dart';
+import 'features/card_lookup/services/card_data_updater.dart';
 import 'features/settings/models/game_tracker_settings.dart';
 import 'features/settings/models/setting_enums.dart';
 import 'features/settings/screens/settings_screen.dart';
@@ -42,6 +45,7 @@ class _AppShellState extends State<AppShell> {
   SubApp _activeSubApp = SubApp.gameTracker;
 
   late AppLifecycleListener _lifecycleListener;
+  StreamSubscription<CardDataOutcome>? _updateOutcomes;
 
   @override
   void initState() {
@@ -64,10 +68,33 @@ class _AppShellState extends State<AppShell> {
 
     // Schedule wakelock post-frame — platform channel call, not safe mid-build.
     WidgetsBinding.instance.addPostFrameCallback((_) => _applyWakelock());
+
+    // A card-data update does not block, so it may well finish while the user
+    // is somewhere else entirely — scanning, most likely. The shell is the one
+    // thing always mounted, so it is what says so, and `ScaffoldMessenger.of`
+    // from here resolves to the app-level messenger, which shows the notice on
+    // whichever screen is actually on top.
+    _updateOutcomes = CardDataUpdater.instance.outcomes.listen(_onCardData);
+  }
+
+  void _onCardData(CardDataOutcome outcome) {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger == null) return;
+    messenger.showSnackBar(SnackBar(
+      content: Text(switch (outcome) {
+        CardDataOutcome.updated => 'Card data updated.',
+        // Deliberately mild: a failed update leaves the database exactly as
+        // valid as it was, so nothing here needs to alarm anyone.
+        CardDataOutcome.failed => 'Card data update did not finish.',
+      }),
+      behavior: SnackBarBehavior.floating,
+    ));
   }
 
   @override
   void dispose() {
+    unawaited(_updateOutcomes?.cancel());
     _lifecycleListener.dispose();
     _service.formatPresetsNotifier.removeListener(_onFormatPresetsChanged);
     super.dispose();
