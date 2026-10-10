@@ -2,8 +2,10 @@ import 'dart:async';
 import 'dart:ui';
 
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../../../core/logging/app_logger.dart';
+import '../../settings/services/settings_service.dart';
 import 'hash_worker.dart';
 
 /// The foreground service's entry point.
@@ -43,6 +45,7 @@ class HashQueueTaskHandler extends TaskHandler {
     // touches a platform channel — path_provider, which both the database and
     // the index file need — fails until this runs.
     DartPluginRegistrant.ensureInitialized();
+    await _attachLogger();
 
     AppLogger.i('HashQueueTask: started by $starter');
 
@@ -53,6 +56,23 @@ class HashQueueTaskHandler extends TaskHandler {
     // keep a notification alive, so it retires itself.
     AppLogger.i('HashQueueTask: finished, stopping service');
     await FlutterForegroundTask.stopService();
+  }
+
+  /// Without this every log call in this isolate is a silent no-op, because
+  /// `AppLogger`'s logger is a static and `main()` — which configures it —
+  /// never ran here. The level comes from the same setting the UI reads, so
+  /// turning on Verbose covers the service too.
+  Future<void> _attachLogger() async {
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final loaded = await SettingsService.load();
+      AppLogger.attachSecondary(
+        level: loaded.app.logLevel,
+        logDir: dir.path,
+      );
+    } catch (_) {
+      // Logging is diagnostics; failing to start it must not stop the work.
+    }
   }
 
   void _report(HashProgress p) {
