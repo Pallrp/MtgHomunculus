@@ -302,9 +302,21 @@ class HashIndex {
   /// length. The header's count is left stale on purpose — nothing reads it.
   static Future<HashIndex?> append(Map<String, Uint8List> entries) async {
     if (entries.isEmpty) return load();
+    return await appendOnly(entries) ? load() : null;
+  }
+
+  /// Append records and **do not** re-read the file.
+  ///
+  /// [append] ends by reloading, which re-reads and re-parses all 3.8 MB. That
+  /// is the right thing when the caller needs the grown index back, and pure
+  /// waste when it does not — which is the case for the hash queue, where it
+  /// forced batches so large that an interrupted pass discarded hundreds of
+  /// cards' worth of real work. Without the reload, appending often is cheap.
+  static Future<bool> appendOnly(Map<String, Uint8List> entries) async {
+    if (entries.isEmpty) return true;
     try {
       final f = await file();
-      if (!await f.exists()) return null;
+      if (!await f.exists()) return false;
 
       final buf = BytesBuilder(copy: false);
       for (final e in entries.entries) {
@@ -313,10 +325,10 @@ class HashIndex {
         buf.add(e.value);
       }
       await f.writeAsBytes(buf.takeBytes(), mode: FileMode.append, flush: true);
-      return load();
+      return true;
     } catch (e, st) {
       AppLogger.w('HashIndex: append failed', error: e, stackTrace: st);
-      return null;
+      return false;
     }
   }
 

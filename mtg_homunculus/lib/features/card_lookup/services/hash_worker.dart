@@ -86,9 +86,15 @@ class HashWorker {
   /// is enough to hide that latency without becoming a thundering herd.
   static const _concurrency = 8;
 
-  /// Appended in batches: each [HashIndex.append] rewrites and reloads the
-  /// whole index, so this turns N reloads into N/250.
-  static const _appendEvery = 250;
+  /// Hashes written to the index per append.
+  ///
+  /// **Small on purpose.** Interruption is the normal case here — the user
+  /// presses Stop, Android dozes, the screen goes off — and anything still
+  /// sitting in the batch when that happens is thrown away. It was 250, and an
+  /// interrupted pass duly discarded 124 cards of finished network and CPU
+  /// work. Ten bounds the loss to something not worth noticing, and
+  /// [HashIndex.appendOnly] makes the write cheap enough to do that often.
+  static const _appendEvery = 10;
 
   /// Consecutive transient failures before giving up.
   ///
@@ -102,6 +108,22 @@ class HashWorker {
 
   bool _stop = false;
   void stop() => _stop = true;
+
+  /// Serialises appends.
+  ///
+  /// Eight workers share the batch, so two of them can be awaiting a write at
+  /// once. Each append is a separate open-append-close, and two overlapping
+  /// ones could interleave *within* a record — which `HashIndex.parse` cannot
+  /// detect, because the file length would still be a whole number of records.
+  /// It would simply hold a garbage hash. A chained future is enough: writes
+  /// are rare and tiny next to the fetches.
+  Future<void> _appendQueue = Future<void>.value();
+
+  Future<void> _appendSerialised(Map<String, Uint8List> entries) {
+    final done = _appendQueue.then((_) => HashIndex.appendOnly(entries));
+    _appendQueue = done.catchError((Object _) => false);
+    return done;
+  }
 
   /// How many printings still need a hash. Null when there is no index.
   Future<int?> count() async {
@@ -125,7 +147,9 @@ class HashWorker {
         ));
 
     try {
-      var index = await HashIndex.load();
+      // Read once, for the backlog. Nothing after this needs the index in
+      // memory, which is why appending never reloads it.
+      final index = await HashIndex.load();
       if (index == null) {
         AppLogger.i('HashWorker: no index to append to');
         return;
@@ -171,14 +195,16 @@ class HashWorker {
           if (batch.length >= _appendEvery) {
             final snapshot = Map<String, Uint8List>.from(batch);
             batch.clear();
-            index = await HashIndex.append(snapshot) ?? index;
+            await _appendSerialised(snapshot);
           }
         }
       }
 
       await Future.wait([for (var i = 0; i < _concurrency; i++) worker()]);
 
-      if (batch.isNotEmpty) await HashIndex.append(batch);
+      if (batch.isNotEmpty) await _appendSerialised(batch);
+      // And let any still-chained write land before reporting finished.
+      await _appendQueue;
 
       if (consecutiveTransient >= _giveUpAfter) {
         AppLogger.w('HashWorker: $_giveUpAfter failures in a row, stopped');

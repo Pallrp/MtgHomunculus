@@ -336,6 +336,13 @@ class ScannerOverlayState extends State<ScannerOverlay> {
   // ---------------------------------------------------------------------------
 
   void _startStream() {
+    // Drop the loaded index so the next frame re-reads it. The hash queue
+    // appends to that file from the foreground service, and without this the
+    // scanner would keep using the copy it read when the app launched —
+    // freshly hashed cards would not match until a restart.
+    _indexTried = false;
+    _index = null;
+
     if (_controller == null || !_cameraReady) return;
     if (_controller!.value.isStreamingImages) return; // guard: already streaming
     _canProcess = true;
