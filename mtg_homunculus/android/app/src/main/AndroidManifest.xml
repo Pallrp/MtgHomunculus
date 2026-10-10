@@ -47,7 +47,7 @@
         <!-- Name fixed by the plugin. foregroundServiceType is mandatory from
              Android 14, and the service will not start without it.
              stopWithTask: killing the app stops the pass, which is the less
-             surprising behaviour for an optional chore -- the backlog is
+             surprising behaviour for an optional chore. The backlog is
              resumable, so nothing is lost. -->
         <service
             android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
