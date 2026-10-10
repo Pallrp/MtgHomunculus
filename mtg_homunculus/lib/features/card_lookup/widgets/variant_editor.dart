@@ -5,6 +5,7 @@ import '../data/collection_database.dart';
 import '../models/scan_defaults.dart';
 import '../models/scryfall_card.dart';
 import '../theme/picker_tokens.dart';
+import 'card_thumb.dart';
 import 'attribute_chips.dart';
 import 'card_picker.dart';
 
@@ -245,12 +246,7 @@ class _VariantEditorState extends State<VariantEditor> {
               aspectRatio: 0.716,
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(4),
-                child: url == null
-                    ? ColoredBox(color: theme.colorScheme.surfaceContainerHighest)
-                    : Image.network(url, fit: BoxFit.cover,
-                        errorBuilder: (c, _, _) => ColoredBox(
-                          color: theme.colorScheme.surfaceContainerHighest,
-                        )),
+                child: CardThumb(url: url),
               ),
             ),
           ),

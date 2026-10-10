@@ -6,6 +6,7 @@ import '../models/scan_defaults.dart';
 import '../models/scryfall_card.dart';
 import '../theme/picker_tokens.dart';
 import 'attribute_chips.dart';
+import 'card_thumb.dart';
 
 /// What the slot under the management bar is currently showing.
 ///
@@ -605,6 +606,10 @@ class _EntryRowState extends State<_EntryRow>
   Widget build(BuildContext context) {
     final t = PickerTokens.of(context);
     final e = widget.entry;
+    // No timestamp: a list entry keeps a denormalised snapshot and does not
+    // carry `image_updated_at`, so this URL has no cache-buster. Harmless for a
+    // 40 dp thumbnail — it means replaced art persists until the entry is
+    // evicted rather than refreshing, which nobody will notice at this size.
     final url = ScryfallCard.imageUrlFor(e.cardId, null, size: 'small');
 
     final meta = e.snapSetName.isEmpty
@@ -646,17 +651,7 @@ class _EntryRowState extends State<_EntryRow>
               child: SizedBox(
                 width: PickerTokens.thumbWidth,
                 height: PickerTokens.thumbHeight,
-                child: url == null
-                    ? ColoredBox(color: t.surface2)
-                    : Image.network(
-                        url,
-                        fit: BoxFit.cover,
-                        errorBuilder: (c, _, _) => ColoredBox(
-                          color: t.surface2,
-                          child: Icon(Icons.image_not_supported_outlined,
-                              size: 14, color: t.textFaint),
-                        ),
-                      ),
+                child: CardThumb(url: url),
               ),
             ),
             const SizedBox(width: 10),

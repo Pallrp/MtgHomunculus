@@ -87,10 +87,19 @@ class ScryfallCard {
   ///
   /// The timestamp is a cache-buster: Scryfall re-scans cards, and without it a
   /// CDN or disk cache would serve the old scan indefinitely.
-  static String? imageUrlFor(String id, int? imageUpdatedAt, {String size = 'normal'}) {
+  /// [face] is `front` or `back`. A double-faced card has **no** top-level
+  /// `image_uris` — they live per-face in `card_faces[]` — but the URL still
+  /// uses the parent card id, so `has_back` is all the schema needs to know
+  /// whether `back` resolves to anything.
+  static String? imageUrlFor(
+    String id,
+    int? imageUpdatedAt, {
+    String size = 'normal',
+    String face = 'front',
+  }) {
     if (id.length < 2) return null;
     final stamp = imageUpdatedAt == null ? '' : '?$imageUpdatedAt';
-    return 'https://cards.scryfall.io/$size/front/${id[0]}/${id[1]}/$id.jpg$stamp';
+    return 'https://cards.scryfall.io/$size/$face/${id[0]}/${id[1]}/$id.jpg$stamp';
   }
 
   // ---------------------------------------------------------------------------

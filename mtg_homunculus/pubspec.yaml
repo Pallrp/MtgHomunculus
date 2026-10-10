@@ -56,6 +56,10 @@ dependencies:
   # DHash.lumaFromRgb.
   image: ^4.9.2
 
+  # Thumbnail disk cache. `small` only -- see local_data_store.md.
+  cached_network_image: ^3.4.1
+  flutter_cache_manager: ^3.4.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

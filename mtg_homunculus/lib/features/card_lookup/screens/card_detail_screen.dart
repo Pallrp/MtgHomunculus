@@ -48,6 +48,10 @@ class CardDetailScreen extends StatefulWidget {
 class _CardDetailScreenState extends State<CardDetailScreen> {
   Entry? _entry;
   Card? _printing;
+
+  /// Which face the art is showing. Always starts on the front: a remembered
+  /// face would mean reopening a card to a side you did not ask for.
+  bool _showBack = false;
   bool _loading = true;
 
   /// The entry id moves when an edit merges this row into an existing variant,
@@ -164,7 +168,14 @@ class _CardDetailScreenState extends State<CardDetailScreen> {
     }
 
     final theme = Theme.of(context);
-    final url = ScryfallCard.imageUrlFor(entry.cardId, _printing?.imageUpdatedAt);
+    // Double-faced cards have a back worth reading, and `has_back` is the only
+    // thing that decides whether the control exists at all.
+    final hasBack = _printing?.hasBack ?? false;
+    final url = ScryfallCard.imageUrlFor(
+      entry.cardId,
+      _printing?.imageUpdatedAt,
+      face: _showBack && hasBack ? 'back' : 'front',
+    );
 
     return Scaffold(
       appBar: AppBar(
@@ -185,22 +196,49 @@ class _CardDetailScreenState extends State<CardDetailScreen> {
             children: [
               SizedBox(
                 width: 132,
-                child: AspectRatio(
-                  aspectRatio: 0.716,
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: url == null
-                        ? const ColoredBox(color: Colors.black12)
-                        : Image.network(
-                            url,
-                            fit: BoxFit.cover,
-                            errorBuilder: (c, _, _) => ColoredBox(
-                              color: theme.colorScheme.surfaceContainerHighest,
-                              child: Icon(Icons.wifi_off_rounded,
-                                  color: theme.disabledColor),
-                            ),
+                child: Column(
+                  children: [
+                    AspectRatio(
+                      aspectRatio: 0.716,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: url == null
+                            ? const ColoredBox(color: Colors.black12)
+                            : Image.network(
+                                // Not disk-cached, deliberately: detail art is
+                                // fetched singly, for a screen already online
+                                // when it opens.
+                                url,
+                                fit: BoxFit.cover,
+                                errorBuilder: (c, _, _) => ColoredBox(
+                                  color:
+                                      theme.colorScheme.surfaceContainerHighest,
+                                  child: Icon(Icons.wifi_off_rounded,
+                                      color: theme.disabledColor),
+                                ),
+                              ),
+                      ),
+                    ),
+                    // A button rather than tapping the art: tapping is the
+                    // gesture a future zoom will want, and spending it here
+                    // would mean taking it back later. It also advertises that
+                    // a back face exists, which a bare tap target cannot.
+                    if (hasBack)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: TextButton.icon(
+                          onPressed: () =>
+                              setState(() => _showBack = !_showBack),
+                          icon: const Icon(Icons.flip_camera_android_outlined,
+                              size: 16),
+                          style: TextButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            visualDensity: VisualDensity.compact,
                           ),
-                  ),
+                          label: Text(_showBack ? 'Front' : 'Back'),
+                        ),
+                      ),
+                  ],
                 ),
               ),
               const SizedBox(width: 16),
