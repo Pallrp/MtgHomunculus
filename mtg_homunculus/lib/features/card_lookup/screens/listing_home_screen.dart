@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../data/collection_database.dart';
+import '../models/dev_flags.dart';
 import '../models/scan_defaults.dart';
 import 'listing_detail_screen.dart';
-import 'quick_scan_screen.dart';
 
 // ---------------------------------------------------------------------------
 // Screen
@@ -50,6 +50,7 @@ class _ListingHomeScreenState extends State<ListingHomeScreen> {
     // Loaded here because this screen is the only way into the sub-app, and
     // every surface below it renders chips against these.
     await ScanDefaults.loadCurrent();
+    await DevFlags.load();
 
     final listings = await _db.allLists();
     final counts   = await _db.countsForAll();
@@ -121,16 +122,6 @@ class _ListingHomeScreenState extends State<ListingHomeScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Card Lookup'),
-        actions: [
-          IconButton(
-            icon:      const Icon(Icons.document_scanner_outlined),
-            tooltip:   'Quick Scan',
-            onPressed: () => Navigator.push<void>(
-              context,
-              MaterialPageRoute(builder: (_) => const QuickScanScreen()),
-            ),
-          ),
-        ],
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: _showCreateDialog,

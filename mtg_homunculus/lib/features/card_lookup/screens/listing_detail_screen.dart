@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../../core/logging/app_logger.dart';
 import '../data/cards_database.dart';
 import '../data/collection_database.dart';
+import '../models/dev_flags.dart';
 import '../models/scan_defaults.dart';
 import '../models/scryfall_card.dart';
 import '../widgets/card_picker.dart';
@@ -351,15 +352,23 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
       body: Stack(
         children: [
           // Full-screen camera overlay.
+          //
+          // Rebuilt when the debug flag flips, so the tuning cluster appears
+          // without leaving the screen. The key stays on the overlay, so its
+          // state — and the camera it owns — survives that rebuild.
           Positioned.fill(
-            child: ScannerOverlay(
-              key:                _scannerKey,
-              isActive:           _cameraActive,
-              showCaptureButton:  false,
-              onCardAdded:        _onCardAdded,
-              onEntryTapped:      _openDetail,
-              onIdle:             _onScannerIdle,
-              onDuplicate:        _onDuplicate,
+            child: ValueListenableBuilder<bool>(
+              valueListenable: DevFlags.tuningTools,
+              builder: (context, showTools, _) => ScannerOverlay(
+                key:                _scannerKey,
+                isActive:           _cameraActive,
+                showCaptureButton:  false,
+                showTuningButton:   showTools,
+                onCardAdded:        _onCardAdded,
+                onEntryTapped:      _openDetail,
+                onIdle:             _onScannerIdle,
+                onDuplicate:        _onDuplicate,
+              ),
             ),
           ),
 

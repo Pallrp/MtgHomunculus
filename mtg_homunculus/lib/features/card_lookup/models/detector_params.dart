@@ -2,7 +2,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 /// All tunable parameters for [CardDetector] and [ScanPipeline].
 ///
-/// A static singleton keeps both [ListingDetailScreen] and [QuickScanScreen]
+/// A static singleton keeps the scanner surface and the tuning panel
 /// in sync without threading values through the widget tree.  Any change made
 /// in the tuning panel is immediately persisted via [setCurrent] so values
 /// survive app restarts and version updates.

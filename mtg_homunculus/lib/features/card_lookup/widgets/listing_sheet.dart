@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../data/collection_database.dart';
+import '../models/dev_flags.dart';
 import '../models/scan_defaults.dart';
 import '../models/scryfall_card.dart';
 import '../theme/picker_tokens.dart';
@@ -485,6 +486,22 @@ class ListingSheet extends StatelessWidget {
                 Navigator.of(sheetContext).pop();
                 onExportCsv();
               },
+            ),
+            const Divider(height: 1),
+            // The tuning panel's home now that Quick Scan is gone. Off by
+            // default and persisted; the menu stays open on toggle, so it can
+            // be flipped back without reopening anything.
+            ValueListenableBuilder<bool>(
+              valueListenable: DevFlags.tuningTools,
+              builder: (context, on, _) => SwitchListTile(
+                secondary: const Icon(Icons.tune_rounded),
+                title: const Text('Scanner debug tools'),
+                subtitle: const Text(
+                  'Detector sliders, edge map and OCR preview',
+                ),
+                value: on,
+                onChanged: DevFlags.setTuningTools,
+              ),
             ),
           ],
         ),

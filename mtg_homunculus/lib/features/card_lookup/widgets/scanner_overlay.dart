@@ -37,7 +37,7 @@ import 'tuning_panel.dart';
 // Widget
 // ---------------------------------------------------------------------------
 
-/// Camera overlay widget used on [ListingDetailScreen] and [QuickScanScreen].
+/// Camera overlay widget used on [ListingDetailScreen].
 ///
 /// **Responsibilities**
 /// - Initialises and owns the [CameraController] (one init, never recreated).
@@ -96,8 +96,11 @@ class ScannerOverlay extends StatefulWidget {
   final VoidCallback? onIdle;
 
   /// When true, a tuning-panel toggle button is rendered inside the overlay
-  /// and the full [TuningPanel] is accessible.  Intended for [QuickScanScreen]
-  /// only; leave false (the default) for [ListingDetailScreen].
+  /// and the full [TuningPanel] is accessible.
+  ///
+  /// Driven by `DevFlags.tuningTools`, a persisted developer switch toggled
+  /// from the listing sheet's gear menu. Off by default, and when false the
+  /// cluster is not built at all — the scanning surface has no spare corners.
   final bool showTuningButton;
 
   const ScannerOverlay({
