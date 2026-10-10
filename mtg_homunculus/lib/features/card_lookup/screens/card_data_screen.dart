@@ -583,7 +583,10 @@ class _HashSection extends StatelessWidget {
               ),
             ),
             Text(
-              '${queue.done}',
+              // Hashed, not merely processed: a card whose image could not be
+              // fetched moved the loop along without gaining a fingerprint, and
+              // reporting those as done would overstate the result.
+              '${queue.hashed}',
               style: PickerTokens.mono(context, size: 12)
                   .copyWith(color: t.textDim),
             ),
@@ -599,9 +602,24 @@ class _HashSection extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 10),
-        TextButton(
-          onPressed: queue.stop,
-          child: const Text('Stop'),
+        Row(
+          children: [
+            if (queue.paused)
+              Expanded(
+                child: Text(
+                  // Not a stall: a backgrounded app has no usable network, and
+                  // hammering it would spend the backlog on failures.
+                  'Paused while the app is in the background',
+                  style: TextStyle(fontSize: 11, color: t.textFaint),
+                ),
+              )
+            else
+              const Spacer(),
+            TextButton(
+              onPressed: queue.stop,
+              child: const Text('Stop'),
+            ),
+          ],
         ),
       ];
 
