@@ -1,9 +1,16 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import '../data/cards_database.dart';
 import '../data/collection_database.dart';
+import '../data/hash_index.dart';
 import '../models/dev_flags.dart';
 import '../models/scan_defaults.dart';
+import '../theme/picker_tokens.dart';
+import 'card_data_screen.dart';
+import 'card_data_setup_screen.dart';
 import 'listing_detail_screen.dart';
 
 // ---------------------------------------------------------------------------
@@ -28,6 +35,12 @@ class _ListingHomeScreenState extends State<ListingHomeScreen> {
   Map<int, ({int copies, int unique})> _counts = const {};
   bool             _loading      = true;
 
+  /// For the card data row and the screen behind it. Null until first needed.
+  CardsDatabase get _cards => CardsDatabase.instance;
+
+  int?    _cardCount;
+  String  _bulkUpdatedAt = '';
+
   CollectionDatabase get _db => CollectionDatabase.instance;
 
   // ---------------------------------------------------------------------------
@@ -41,6 +54,57 @@ class _ListingHomeScreenState extends State<ListingHomeScreen> {
     _load();
   }
 
+  Future<void> _loadCardData() async {
+    try {
+      final count = await _cards.cardCount();
+      final updated = await _cards.metaValue(MetaKeys.bulkUpdatedAt) ?? '';
+      if (!mounted) return;
+      setState(() {
+        _cardCount = count;
+        _bulkUpdatedAt = updated;
+      });
+    } catch (_) {
+      // The row degrades to its label alone. Not worth a message: the screen
+      // behind it reports properly.
+    }
+  }
+
+  Future<void> _openCardData() async {
+    await Navigator.push<void>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => CardDataScreen(db: _cards, onReDownload: _reDownload),
+      ),
+    );
+    if (mounted) unawaited(_loadCardData());
+  }
+
+  /// Clear the import marker and delete the index, then hand over to the
+  /// blocking setup screen — the same path first run takes, so there is no
+  /// separate recovery flow to maintain.
+  Future<void> _reDownload() async {
+    await _cards.setMeta(MetaKeys.bulkImportedAt, '');
+    try {
+      final f = await HashIndex.file();
+      if (await f.exists()) await f.delete();
+    } catch (_) {}
+    if (!mounted) return;
+
+    // Removes both this screen and the card data screen above it: there is
+    // nothing to go back to while the database is empty.
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(
+        builder: (ctx) => CardDataSetupScreen(
+          db: _cards,
+          onReady: () => Navigator.of(ctx).pushReplacement(
+            MaterialPageRoute(builder: (_) => const ListingHomeScreen()),
+          ),
+        ),
+      ),
+      (r) => r.isFirst,
+    );
+  }
+
   Future<void> _requestCamera() async {
     final status = await Permission.camera.request();
     if (mounted) setState(() => _cameraStatus = status);
@@ -51,6 +115,11 @@ class _ListingHomeScreenState extends State<ListingHomeScreen> {
     // every surface below it renders chips against these.
     await ScanDefaults.loadCurrent();
     await DevFlags.load();
+
+    // Card data row: both figures are cheap, and the row is meant to be legible
+    // without a tap — the count and the age are what you want at the moment a
+    // scan has just failed on a card you know exists.
+    unawaited(_loadCardData());
 
     final listings = await _db.allLists();
     final counts   = await _db.countsForAll();
@@ -123,6 +192,10 @@ class _ListingHomeScreenState extends State<ListingHomeScreen> {
       appBar: AppBar(
         title: const Text('Card Lookup'),
       ),
+      // Lifted clear of the card data row, which is pinned to the bottom —
+      // otherwise the FAB lands on top of it and eats the chevron.
+      floatingActionButtonLocation:
+          const _EndFloatAbove(_CardDataRow.height),
       floatingActionButton: FloatingActionButton(
         onPressed: _showCreateDialog,
         tooltip:   'New listing',
@@ -152,6 +225,16 @@ class _ListingHomeScreenState extends State<ListingHomeScreen> {
         // Listing content.
         Expanded(
           child: _listings.isEmpty ? _buildEmptyState() : _buildList(),
+        ),
+
+        // Card data — pinned below the lists, never scrolling with them. It is
+        // infrastructure, not a list, and it is deliberately a row rather than a
+        // gear: a gear promises options to configure, and this has a status and
+        // two actions. See local_data_store.md.
+        _CardDataRow(
+          cardCount: _cardCount,
+          updatedAt: _bulkUpdatedAt,
+          onTap: _openCardData,
         ),
       ],
     );
@@ -387,4 +470,117 @@ String _formatDate(DateTime dt) {
     'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
   ];
   return '${dt.day} ${months[dt.month - 1]} ${dt.year}';
+}
+
+// ---------------------------------------------------------------------------
+// Card data row
+// ---------------------------------------------------------------------------
+
+/// The pinned footer into the card data screen.
+///
+/// Also where an available update announces itself, in **words** rather than a
+/// dot — the size is the number that decides whether now is the moment, and a
+/// dot can only say "something".
+class _CardDataRow extends StatelessWidget {
+  /// Matches a `ListTile`'s dense height closely enough to lift the FAB by.
+  static const double height = 60;
+
+  final int? cardCount;
+  final String updatedAt;
+  final VoidCallback onTap;
+
+  const _CardDataRow({
+    required this.cardCount,
+    required this.updatedAt,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = PickerTokens.of(context);
+
+    return Material(
+      color: t.surface2,
+      child: InkWell(
+        onTap: onTap,
+        child: SafeArea(
+          top: false,
+          child: Container(
+            height: height,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            decoration: BoxDecoration(
+              border: Border(top: BorderSide(color: t.line)),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.inventory_2_outlined, size: 20, color: t.textDim),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Card data',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: t.text,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        _subtitle(),
+                        style: PickerTokens.mono(context, size: 11)
+                            .copyWith(color: t.textFaint),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(Icons.chevron_right_rounded, size: 20, color: t.textFaint),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _subtitle() {
+    final n = cardCount;
+    if (n == null) return 'Counting…';
+    final parts = ['${_thousands(n)} cards'];
+    final d = DateTime.tryParse(updatedAt);
+    if (d != null) parts.add('${d.day} ${_shortMonths[d.month - 1]}');
+    return parts.join(' · ');
+  }
+
+  static const _shortMonths = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+
+  static String _thousands(int n) {
+    final s = '$n';
+    final out = StringBuffer();
+    for (var i = 0; i < s.length; i++) {
+      if (i > 0 && (s.length - i) % 3 == 0) out.write(',');
+      out.write(s[i]);
+    }
+    return out.toString();
+  }
+}
+
+/// `endFloat`, raised by [lift] so the FAB clears a pinned footer.
+class _EndFloatAbove extends StandardFabLocation
+    with FabEndOffsetX, FabFloatOffsetY {
+  final double lift;
+  const _EndFloatAbove(this.lift);
+
+  @override
+  double getOffsetY(ScaffoldPrelayoutGeometry geometry, double adjustment) =>
+      super.getOffsetY(geometry, adjustment) - lift;
+
+  @override
+  String toString() => 'FloatingActionButtonLocation.endFloat(above: $lift)';
 }

@@ -98,6 +98,23 @@ abstract final class MetaKeys {
   static const schemaVersion = 'schema_version';
 }
 
+/// Row counts for the card data screen.
+///
+/// Read live rather than from `meta`: `bulk_card_count` records what one import
+/// inserted, which is not the same as what is in the table after a second one
+/// added to it.
+class CardDataCounts {
+  final int cards;
+  final int uniqueNames;
+  final int sets;
+
+  const CardDataCounts({
+    required this.cards,
+    required this.uniqueNames,
+    required this.sets,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Database
 // ---------------------------------------------------------------------------
@@ -108,6 +125,18 @@ abstract final class MetaKeys {
 @DriftDatabase(tables: [Meta, Sets, Cards])
 class CardsDatabase extends _$CardsDatabase {
   CardsDatabase() : super(_open());
+
+  static CardsDatabase? _instance;
+
+  /// The one instance the app uses.
+  ///
+  /// Not for drift's stream-invalidation reasons that make
+  /// [CollectionDatabase.instance] a singleton — this database is read-mostly
+  /// and nothing watches it. It is a singleton because five screens wanted one
+  /// and each was opening its own connection to the same file, and because a
+  /// screen that owns a connection cannot safely close it: the setup screen
+  /// outlives the screen that launches it. Opening stays lazy.
+  static CardsDatabase get instance => _instance ??= CardsDatabase();
   CardsDatabase.forTesting(super.executor);
 
   @override
@@ -189,6 +218,49 @@ class CardsDatabase extends _$CardsDatabase {
           ..where((c) => c.imageStatus.isBiggerOrEqualValue(2)))
         .get();
     return rows.where((c) => !indexed.contains(c.id)).take(limit).toList();
+  }
+
+  /// Ids of every printing that *can* be hashed — the same `image_status`
+  /// filter [unhashed] uses, without materialising whole rows.
+  ///
+  /// For counting against a loaded index. [unhashed] builds `Card` objects
+  /// because the queue needs the image fields; the card data screen only needs
+  /// to know how many are missing.
+  Future<List<String>> hashableIds() async {
+    final rows =
+        await customSelect('SELECT id FROM cards WHERE image_status >= 2').get();
+    return [for (final r in rows) r.read<String>('id')];
+  }
+
+  /// Printings in the table. Cheap, and all the lists-folder row needs.
+  Future<int> cardCount() => _scalar('SELECT COUNT(*) AS n FROM cards');
+
+  Future<int> _scalar(String sql) async =>
+      (await customSelect(sql).getSingle()).read<int>('n');
+
+  /// The numbers behind the card data screen, in one pass.
+  Future<CardDataCounts> counts() async {
+    Future<int> scalar(String sql) => _scalar(sql);
+
+    return CardDataCounts(
+      cards: await cardCount(),
+      // Distinct names from the table rather than `card_names_fts`: an
+      // incremental `addNewNames` never removes, so the index can hold the old
+      // name of a renamed card. The table is the truth.
+      uniqueNames: await scalar('SELECT COUNT(DISTINCT name) AS n FROM cards'),
+      sets: await scalar('SELECT COUNT(*) AS n FROM sets'),
+    );
+  }
+
+  /// Size of `cards.db` on disk, or null if it cannot be read.
+  static Future<int?> fileSize() async {
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final f = File(p.join(dir.path, 'cards.db'));
+      return await f.exists() ? await f.length() : null;
+    } catch (_) {
+      return null;
+    }
   }
 
   // ── name index ────────────────────────────────────────────────────────────

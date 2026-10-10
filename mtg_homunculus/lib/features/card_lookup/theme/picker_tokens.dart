@@ -28,9 +28,24 @@ class PickerTokens extends ThemeExtension<PickerTokens> {
   /// Destructive only. Never a warning, never an emphasis.
   final Color vermilion;
 
+  /// Needs attention, but nothing is broken — *Not yet hashed*, *Update
+  /// available*.
+  ///
+  /// **Deliberately not `condMp`**, which it currently matches exactly. The
+  /// artifact drew these alerts in the Moderately Played amber, but that colour
+  /// belongs to a *card-quality* ramp which is a candidate for redefinition —
+  /// by us, or by the user once per-user condition colours exist. A warning that
+  /// moves because someone recoloured their grading scale is a warning in the
+  /// wrong hue. Same value today, free to diverge tomorrow.
+  final Color warning;
+  final Color warningBg;
+
   /// The condition ramp — one pair per step, straight from the Last-Scan Bar
   /// artifact. Four distinct colours, not an interpolation: the design names
   /// them, so guessing the middle steps was wrong.
+  ///
+  /// **Card quality only.** Nothing outside a condition chip reads these; see
+  /// [warning] for the alert colour that used to borrow [condMp].
   final Color condLp;
   final Color condLpBg;
   final Color condMp;
@@ -54,6 +69,8 @@ class PickerTokens extends ThemeExtension<PickerTokens> {
     required this.accent,
     required this.accentSoft,
     required this.vermilion,
+    required this.warning,
+    required this.warningBg,
     required this.condLp,
     required this.condLpBg,
     required this.condMp,
@@ -86,6 +103,8 @@ class PickerTokens extends ThemeExtension<PickerTokens> {
     accent: Color(0xFF1F9E6B),
     accentSoft: Color(0xFFD6F0E4),
     vermilion: Color(0xFFC4432F),
+    warning: Color(0xFFC2701F),
+    warningBg: Color(0xFFF8E4CE),
     condLp: Color(0xFFA67C10),
     condLpBg: Color(0xFFF7EDCE),
     condMp: Color(0xFFC2701F),
@@ -108,6 +127,8 @@ class PickerTokens extends ThemeExtension<PickerTokens> {
     accent: Color(0xFF5FD9A0),
     accentSoft: Color(0xFF17322A),
     vermilion: Color(0xFFE86A56),
+    warning: Color(0xFFE89F58),
+    warningBg: Color(0xFF35240F),
     condLp: Color(0xFFE8C766),
     condLpBg: Color(0xFF33290F),
     condMp: Color(0xFFE89F58),
@@ -206,6 +227,8 @@ class PickerTokens extends ThemeExtension<PickerTokens> {
     Color? accent,
     Color? accentSoft,
     Color? vermilion,
+    Color? warning,
+    Color? warningBg,
     Color? condLp,
     Color? condLpBg,
     Color? condMp,
@@ -227,6 +250,8 @@ class PickerTokens extends ThemeExtension<PickerTokens> {
         accent: accent ?? this.accent,
         accentSoft: accentSoft ?? this.accentSoft,
         vermilion: vermilion ?? this.vermilion,
+        warning: warning ?? this.warning,
+        warningBg: warningBg ?? this.warningBg,
         condLp: condLp ?? this.condLp,
         condLpBg: condLpBg ?? this.condLpBg,
         condMp: condMp ?? this.condMp,
@@ -252,6 +277,8 @@ class PickerTokens extends ThemeExtension<PickerTokens> {
       accent: Color.lerp(accent, other.accent, t)!,
       accentSoft: Color.lerp(accentSoft, other.accentSoft, t)!,
       vermilion: Color.lerp(vermilion, other.vermilion, t)!,
+      warning: Color.lerp(warning, other.warning, t)!,
+      warningBg: Color.lerp(warningBg, other.warningBg, t)!,
       condLp: Color.lerp(condLp, other.condLp, t)!,
       condLpBg: Color.lerp(condLpBg, other.condLpBg, t)!,
       condMp: Color.lerp(condMp, other.condMp, t)!,

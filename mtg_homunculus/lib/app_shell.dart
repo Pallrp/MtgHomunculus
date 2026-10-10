@@ -70,7 +70,6 @@ class _AppShellState extends State<AppShell> {
   void dispose() {
     _lifecycleListener.dispose();
     _service.formatPresetsNotifier.removeListener(_onFormatPresetsChanged);
-    _cardsDb?.close();
     super.dispose();
   }
 
@@ -137,8 +136,7 @@ class _AppShellState extends State<AppShell> {
   ///
   /// Opening is cheap — drift connects on first use — so this costs nothing until
   /// the card lookup is actually entered.
-  CardsDatabase? _cardsDb;
-  CardsDatabase get _cards => _cardsDb ??= CardsDatabase();
+  CardsDatabase get _cards => CardsDatabase.instance;
 
   Future<void> _openCardLookup() async {
     // First run has no card data, and the sub-app cannot do anything useful

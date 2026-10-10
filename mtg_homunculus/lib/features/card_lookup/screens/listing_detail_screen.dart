@@ -159,8 +159,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
 
   /// Opened lazily and kept: Card Detail needs it for the finish control, which
   /// has to know what the printing actually came in.
-  CardsDatabase? _cardsDb;
-  CardsDatabase get _cards => _cardsDb ??= CardsDatabase();
+  CardsDatabase get _cards => CardsDatabase.instance;
 
   /// Entries arrive as a stream, so a card added by the scan loop shows up
   /// without the screen having to know a scan happened.

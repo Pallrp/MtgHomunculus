@@ -225,7 +225,6 @@ class ScannerOverlayState extends State<ScannerOverlay> {
   /// been downloaded yet — rather than failing.
   HashIndex?      _index;
   bool            _indexTried = false;
-  CardsDatabase?  _cardsDb;
   CardIdentifier? _identifier;
   List<HashCandidate> _hashHits = const [];
   String              _dataStatus = '';
@@ -312,7 +311,6 @@ class ScannerOverlayState extends State<ScannerOverlay> {
     _guard.reset();
     _recognizer?.close();
     _identifier?.dispose();
-    _cardsDb?.close();
     _stopStream();
     _controller?.dispose();
     super.dispose();
@@ -429,7 +427,7 @@ class ScannerOverlayState extends State<ScannerOverlay> {
   /// Clears `bulk_imported_at` rather than deleting `cards.db`, which drift has
   /// open. The import replaces rows by primary key, so re-running it is safe.
   Future<void> _resetCardData() async {
-    final db = _cardsDb ??= CardsDatabase();
+    final db = CardsDatabase.instance;
     await db.setMeta(MetaKeys.bulkImportedAt, '');
     try {
       final f = await HashIndex.file();
@@ -492,10 +490,9 @@ class ScannerOverlayState extends State<ScannerOverlay> {
           final hash = DHash.compute(gray.data, gray.cols, gray.rows);
           final hits = _index!.nearest(hash);
 
-          _cardsDb ??= CardsDatabase();
           final labelled = <HashCandidate>[];
           for (final h in hits.take(3)) {
-            final c = await _cardsDb!.cardById(h.id);
+            final c = await CardsDatabase.instance.cardById(h.id);
             labelled.add(HashCandidate(
               c == null
                   ? h.id
@@ -612,7 +609,7 @@ class ScannerOverlayState extends State<ScannerOverlay> {
 
   /// The scanner never saw it — open the picker's full-screen scope.
   Future<void> _manualAdd() async {
-    final db = _cardsDb ??= CardsDatabase();
+    final db = CardsDatabase.instance;
     if (!mounted) return;
     final picked = await CardPicker.showScreen(context, db: db);
     if (picked == null) return;
@@ -675,7 +672,7 @@ class ScannerOverlayState extends State<ScannerOverlay> {
     try {
       // Identification runs entirely against local data — the card database and
       // the hash index — so a scan makes no network request at all.
-      final db = _cardsDb ??= CardsDatabase();
+      final db = CardsDatabase.instance;
       if (!_indexTried) {
         _indexTried = true;
         _index = await HashIndex.load();
