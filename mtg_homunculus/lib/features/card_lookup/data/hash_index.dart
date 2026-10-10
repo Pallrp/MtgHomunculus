@@ -308,10 +308,10 @@ class HashIndex {
   /// Append records and **do not** re-read the file.
   ///
   /// [append] ends by reloading, which re-reads and re-parses all 3.8 MB. That
-  /// is the right thing when the caller needs the grown index back, and pure
-  /// waste when it does not — which is the case for the hash queue, where it
-  /// forced batches so large that an interrupted pass discarded hundreds of
-  /// cards' worth of real work. Without the reload, appending often is cheap.
+  /// is right when the caller wants the grown index back, and pure waste when
+  /// it does not — as in the hash queue, where the cost of reloading forced
+  /// batches so large that an interrupted pass threw away everything still
+  /// unwritten. Without the reload, appending often is cheap.
   static Future<bool> appendOnly(Map<String, Uint8List> entries) async {
     if (entries.isEmpty) return true;
     try {

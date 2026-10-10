@@ -57,10 +57,6 @@ class _CardDataScreenState extends State<CardDataScreen> {
   CardDataUpdater get _updater => CardDataUpdater.instance;
   HashQueue get _queue => HashQueue.instance;
 
-  /// Null until checked. Governs whether the queue survives the screen going
-  /// off, so it is worth saying out loud rather than letting it fail quietly.
-  bool? _batteryExempt;
-
   @override
   void initState() {
     super.initState();
@@ -109,15 +105,7 @@ class _CardDataScreenState extends State<CardDataScreen> {
     // And the backlog last. It needs every id in the index plus every hashable
     // id in the table, so it is the one figure here that cannot be a cheap
     // `COUNT(*)`. Counted only on this screen, never on the way past it.
-    //
-    // `reconcile` rather than `count`, because the service may have run and
-    // finished while the app was away, reporting to a port with nobody on the
-    // other end.
-    await _queue.reconcile();
-
-    final exempt = await _queue.ignoringBatteryOptimizations;
-    if (!mounted) return;
-    setState(() => _batteryExempt = exempt);
+    if (!_queue.running) await _queue.count();
   }
 
   // ---------------------------------------------------------------------------
@@ -197,15 +185,7 @@ class _CardDataScreenState extends State<CardDataScreen> {
           ]),
           ListenableBuilder(
             listenable: _queue,
-            builder: (context, _) => _HashSection(
-              queue: _queue,
-              batteryExempt: _batteryExempt,
-              onRequestExemption: () async {
-                await _queue.requestBatteryExemption();
-                final exempt = await _queue.ignoringBatteryOptimizations;
-                if (mounted) setState(() => _batteryExempt = exempt);
-              },
-            ),
+            builder: (context, _) => _HashSection(queue: _queue),
           ),
 
           // Update first: it is the one someone will reach for, and it is the
@@ -529,14 +509,7 @@ class _Running extends StatelessWidget {
 /// which is possible here because both numbers are known.
 class _HashSection extends StatelessWidget {
   final HashQueue queue;
-  final bool? batteryExempt;
-  final Future<void> Function() onRequestExemption;
-
-  const _HashSection({
-    required this.queue,
-    required this.batteryExempt,
-    required this.onRequestExemption,
-  });
+  const _HashSection({required this.queue});
 
   @override
   Widget build(BuildContext context) {
@@ -586,46 +559,9 @@ class _HashSection extends StatelessWidget {
           style: PickerTokens.mono(context, size: 11.5)
               .copyWith(color: t.textFaint),
         ),
-        if (batteryExempt == false) ...[
-          const SizedBox(height: 12),
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: t.warningBg,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  // The service holds a wake lock, so the CPU keeps going --
-                  // but Doze withholds the network from an app that is not
-                  // exempt, and the fetches just stop.
-                  'Android will pause this when the screen goes off. Allowing '
-                  'it to run in the background lets it finish unattended.',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: t.warning,
-                    height: 1.35,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                TextButton(
-                  onPressed: onRequestExemption,
-                  style: TextButton.styleFrom(
-                    foregroundColor: t.warning,
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    visualDensity: VisualDensity.compact,
-                  ),
-                  child: const Text('Allow background running'),
-                ),
-              ],
-            ),
-          ),
-        ],
         const SizedBox(height: 12),
         OutlinedButton(
-          onPressed: queue.start,
+          onPressed: queue.run,
           style: OutlinedButton.styleFrom(
             minimumSize: const Size.fromHeight(42),
           ),
@@ -668,14 +604,17 @@ class _HashSection extends StatelessWidget {
         const SizedBox(height: 10),
         Row(
           children: [
-            Expanded(
-              child: Text(
-                // It runs in a foreground service, so leaving this screen — or
-                // the app — does not interrupt it.
-                'Keeps going in the background. A notification shows progress.',
-                style: TextStyle(fontSize: 11, color: t.textFaint),
-              ),
-            ),
+            if (queue.paused)
+              Expanded(
+                child: Text(
+                  // Not a stall: a backgrounded app has no usable network, and
+                  // hammering it would spend the backlog on failures.
+                  'Paused while the app is in the background',
+                  style: TextStyle(fontSize: 11, color: t.textFaint),
+                ),
+              )
+            else
+              const Spacer(),
             TextButton(
               onPressed: queue.stop,
               child: const Text('Stop'),

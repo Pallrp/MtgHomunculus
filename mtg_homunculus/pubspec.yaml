@@ -60,9 +60,6 @@ dependencies:
   cached_network_image: ^3.4.1
   flutter_cache_manager: ^3.4.1
 
-  # Keeps the hash queue fetching while the app is backgrounded. Android cuts
-  # DNS for a background app, so this is the only sanctioned way.
-  flutter_foreground_task: ^8.17.0
 
 dev_dependencies:
   flutter_test:

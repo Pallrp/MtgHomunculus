@@ -41,7 +41,16 @@ class CardThumb extends StatelessWidget {
   final String? url;
   final BoxFit fit;
 
-  const CardThumb({super.key, required this.url, this.fit = BoxFit.cover});
+  /// The failure glyph's size. A 40 dp row thumbnail and a 160 dp picker tile
+  /// want very different marks.
+  final double iconSize;
+
+  const CardThumb({
+    super.key,
+    required this.url,
+    this.fit = BoxFit.cover,
+    this.iconSize = 14,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -62,7 +71,7 @@ class CardThumb extends StatelessWidget {
         color: t.surface2,
         child: Icon(
           Icons.image_not_supported_outlined,
-          size: 14,
+          size: iconSize,
           color: t.textFaint,
         ),
       ),

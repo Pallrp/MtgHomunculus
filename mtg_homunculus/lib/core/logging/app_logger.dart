@@ -40,27 +40,6 @@ class AppLogger {
     }
   }
 
-  /// Attach the logger in a **secondary isolate**, appending to the existing
-  /// file.
-  ///
-  /// `_logger` is a `static`, and in Dart statics live per isolate — so the
-  /// foreground service's isolate starts with a null one and every log call
-  /// there is a silent no-op until this runs. It cannot use [configure],
-  /// because `_initialized` is per isolate too: that path would read as a
-  /// fresh start and **clear the log the UI isolate is writing**.
-  ///
-  /// Both isolates then append to one file. Lines may interleave, which is
-  /// preferable to hunting through two files, and each write is a single
-  /// open-append-close so a line is never torn in half.
-  static void attachSecondary({
-    required LogLevel level,
-    required String logDir,
-  }) {
-    _logFilePath = '$logDir/$_kLogFile';
-    _initialized = true; // never clear, never rotate from here
-    _logger = _buildLogger(level);
-  }
-
   /// Lightweight level change — call from AppShell when the setting changes.
   static void setLevel(LogLevel level) {
     _logger = _buildLogger(level);

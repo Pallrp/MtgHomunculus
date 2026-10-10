@@ -3,15 +3,6 @@
     <uses-permission android:name="android.permission.VIBRATE"/>
     <uses-permission android:name="android.permission.CAMERA"/>
 
-    <!-- The hash queue keeps fetching card images while the app is in the
-         background. Android cuts DNS for a backgrounded app, so a foreground
-         service is the only sanctioned way; dataSync is its declared type, and
-         POST_NOTIFICATIONS is required because the service cannot run without
-         a visible notification. -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
-
     <application
         android:label="mtg_homunculus"
         android:name="${applicationName}"
@@ -43,17 +34,6 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
-
-        <!-- Name fixed by the plugin. foregroundServiceType is mandatory from
-             Android 14, and the service will not start without it.
-             stopWithTask: killing the app stops the pass, which is the less
-             surprising behaviour for an optional chore. The backlog is
-             resumable, so nothing is lost. -->
-        <service
-            android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
-            android:foregroundServiceType="dataSync"
-            android:exported="false"
-            android:stopWithTask="true"/>
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

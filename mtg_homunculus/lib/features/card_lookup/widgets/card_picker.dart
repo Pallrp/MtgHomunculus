@@ -6,6 +6,7 @@ import 'package:flutter/material.dart' hide Card;
 import '../data/cards_database.dart';
 import '../models/scryfall_card.dart';
 import '../theme/picker_tokens.dart';
+import 'card_thumb.dart';
 
 /// Which question the grid is being opened to answer.
 ///
@@ -403,9 +404,16 @@ class _Tile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final t = PickerTokens.of(context);
-    final url = ScryfallCard.imageUrlFor(card.id, card.imageUpdatedAt);
+    // `small` (146 × 204), not `normal`. A tile is ~160 dp, so a 1080-wide
+    // phone draws it with ~480 physical pixels and `normal` is the sharper fit
+    // — but measured side by side the softness is acceptable for what a tile is
+    // for, telling one printing from another, and `normal` costs 7× the bytes.
+    // At one cache budget that is ~3,500 thumbnails against ~480, which is the
+    // difference between a cache that survives a browsing session and one that
+    // evicts what you looked at a minute ago.
+    final url =
+        ScryfallCard.imageUrlFor(card.id, card.imageUpdatedAt, size: 'small');
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -419,19 +427,9 @@ class _Tile extends StatelessWidget {
               children: [
                 ClipRRect(
                   borderRadius: BorderRadius.circular(8),
-                  child: url == null
-                      ? _placeholder(theme, Icons.image_not_supported_outlined)
-                      : Image.network(
-                          url,
-                          fit: BoxFit.cover,
-                          loadingBuilder: (c, child, progress) =>
-                              progress == null
-                                  ? child
-                                  : _placeholder(theme, null,
-                                      progress: progress),
-                          errorBuilder: (c, _, _) =>
-                              _placeholder(theme, Icons.wifi_off_rounded),
-                        ),
+                  // No load-progress spinner any more: at ~12 KB, and served
+                  // from disk on a repeat search, there is nothing to report.
+                  child: CardThumb(url: url, iconSize: 22),
                 ),
                 // A pill reading IN LIST, not a tick. A tick means "selected",
                 // which is close enough to be misread and means the opposite.
@@ -488,26 +486,6 @@ class _Tile extends StatelessWidget {
     );
   }
 
-  Widget _placeholder(ThemeData theme, IconData? icon,
-          {ImageChunkEvent? progress}) =>
-      ColoredBox(
-        color: theme.colorScheme.surfaceContainerHighest,
-        child: Center(
-          child: icon != null
-              ? Icon(icon, size: 22, color: theme.disabledColor)
-              : SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    value: progress?.expectedTotalBytes == null
-                        ? null
-                        : progress!.cumulativeBytesLoaded /
-                            progress.expectedTotalBytes!,
-                  ),
-                ),
-        ),
-      );
 }
 
 /// The square tap target the artifact uses wherever a value is nudged.

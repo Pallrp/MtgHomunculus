@@ -7,21 +7,14 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'app_shell.dart';
-import 'features/card_lookup/services/hash_queue.dart';
 import 'features/card_lookup/theme/picker_tokens.dart';
 import 'core/logging/app_logger.dart';
 import 'features/settings/models/app_settings.dart';
 import 'features/settings/models/game_tracker_settings.dart';
 import 'features/settings/models/setting_enums.dart';
 import 'features/settings/services/settings_service.dart';
-
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  // Before anything could start the hash queue's foreground service: this
-  // registers the port its isolate reports progress down, and Android may
-  // relaunch the app straight into an already-running service.
-  HashQueue.initMessaging();
 
   // ---------------------------------------------------------------------------
   // Global error hooks — analogous to server-side exception middleware.
