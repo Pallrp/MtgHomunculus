@@ -231,7 +231,7 @@ class CardDataUpdater extends ChangeNotifier {
       // have no hash. Starting straight away is the point — the user has
       // already opted into fetching card data, and leaving the queue for them
       // to find later would mean a week of scans silently falling back to OCR.
-      unawaited(HashQueue.instance.run());
+      unawaited(HashQueue.instance.start());
     } catch (e, st) {
       AppLogger.w('CardDataUpdater: update failed', error: e, stackTrace: st);
       // The database is still entirely valid — the import writes by primary key

@@ -105,7 +105,11 @@ class _CardDataScreenState extends State<CardDataScreen> {
     // And the backlog last. It needs every id in the index plus every hashable
     // id in the table, so it is the one figure here that cannot be a cheap
     // `COUNT(*)`. Counted only on this screen, never on the way past it.
-    if (!_queue.running) await _queue.count();
+    //
+    // `reconcile` rather than `count`, because the service may have run and
+    // finished while the app was away, reporting to a port with nobody on the
+    // other end.
+    await _queue.reconcile();
   }
 
   // ---------------------------------------------------------------------------
@@ -561,7 +565,7 @@ class _HashSection extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         OutlinedButton(
-          onPressed: queue.run,
+          onPressed: queue.start,
           style: OutlinedButton.styleFrom(
             minimumSize: const Size.fromHeight(42),
           ),
@@ -604,17 +608,14 @@ class _HashSection extends StatelessWidget {
         const SizedBox(height: 10),
         Row(
           children: [
-            if (queue.paused)
-              Expanded(
-                child: Text(
-                  // Not a stall: a backgrounded app has no usable network, and
-                  // hammering it would spend the backlog on failures.
-                  'Paused while the app is in the background',
-                  style: TextStyle(fontSize: 11, color: t.textFaint),
-                ),
-              )
-            else
-              const Spacer(),
+            Expanded(
+              child: Text(
+                // It runs in a foreground service, so leaving this screen — or
+                // the app — does not interrupt it.
+                'Keeps going in the background. A notification shows progress.',
+                style: TextStyle(fontSize: 11, color: t.textFaint),
+              ),
+            ),
             TextButton(
               onPressed: queue.stop,
               child: const Text('Stop'),

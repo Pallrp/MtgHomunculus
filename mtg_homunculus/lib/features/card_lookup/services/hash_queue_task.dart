@@ -1,0 +1,97 @@
+import 'dart:async';
+import 'dart:ui';
+
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+
+import '../../../core/logging/app_logger.dart';
+import 'hash_worker.dart';
+
+/// The foreground service's entry point.
+///
+/// **Must be top level and annotated**, because the plugin looks it up by
+/// handle to start a *second* Flutter isolate — tree shaking would otherwise
+/// remove it from a release build.
+@pragma('vm:entry-point')
+void hashQueueCallback() {
+  FlutterForegroundTask.setTaskHandler(HashQueueTaskHandler());
+}
+
+/// Runs [HashWorker] inside the foreground service.
+///
+/// **Why a service at all.** Android cuts DNS for a backgrounded app — measured
+/// on device as `SocketException: Failed host lookup … errno = 7` on 2008 of
+/// 2010 consecutive fetches. A foreground service with `dataSync` is the only
+/// sanctioned way to keep fetching while the user is in another app, and the
+/// notification is a fair trade: it carries live progress and a stop button.
+///
+/// **This runs in its own isolate.** Nothing from the UI isolate is reachable —
+/// not `HashQueue.instance`, not a loaded `HashIndex`, not the open database.
+/// `CardsDatabase.instance` resolves here to a second connection to the same
+/// file, which is fine because the worker only reads it.
+class HashQueueTaskHandler extends TaskHandler {
+  HashWorker? _worker;
+
+  /// Notification updates are throttled: the worker reports per card, and at
+  /// eight concurrent fetches that is dozens a second. Android coalesces
+  /// notification updates anyway, and hammering it wastes battery.
+  static const _notifyEvery = 25;
+  int _lastNotified = -1;
+
+  @override
+  Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
+    // The service isolate starts with no plugins registered, so anything that
+    // touches a platform channel — path_provider, which both the database and
+    // the index file need — fails until this runs.
+    DartPluginRegistrant.ensureInitialized();
+
+    AppLogger.i('HashQueueTask: started by $starter');
+
+    final worker = _worker = HashWorker();
+    await worker.run(onProgress: _report);
+
+    // The work is finite: when the backlog is done the service has no reason to
+    // keep a notification alive, so it retires itself.
+    AppLogger.i('HashQueueTask: finished, stopping service');
+    await FlutterForegroundTask.stopService();
+  }
+
+  void _report(HashProgress p) {
+    FlutterForegroundTask.sendDataToMain(p.toMap());
+
+    if (p.finished || p.done - _lastNotified >= _notifyEvery) {
+      _lastNotified = p.done;
+      FlutterForegroundTask.updateService(
+        notificationTitle: 'Matching cards',
+        notificationText: p.total == 0
+            ? 'Checking…'
+            : '${p.hashed} of ${p.total} matched',
+      );
+    }
+  }
+
+  /// Unused: the work is a single long pass, not a repeating tick.
+  @override
+  void onRepeatEvent(DateTime timestamp) {}
+
+  @override
+  Future<void> onDestroy(DateTime timestamp) async {
+    AppLogger.i('HashQueueTask: destroyed');
+    _worker?.stop();
+  }
+
+  /// The notification's stop button, and the only way to interrupt the pass
+  /// from outside this isolate.
+  @override
+  void onNotificationButtonPressed(String id) {
+    if (id != HashQueueButtons.stop) return;
+    AppLogger.i('HashQueueTask: stop pressed');
+    _worker?.stop();
+  }
+
+  @override
+  void onNotificationPressed() => FlutterForegroundTask.launchApp();
+}
+
+abstract final class HashQueueButtons {
+  static const stop = 'hash_stop';
+}
