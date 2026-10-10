@@ -129,8 +129,16 @@ class HashQueue extends ChangeNotifier {
   /// are denied, which Android requires for a foreground service.
   Future<bool> start() async {
     _wire();
+    AppLogger.i('HashQueue: start requested');
 
-    if (await FlutterForegroundTask.isRunningService) return true;
+    if (await FlutterForegroundTask.isRunningService) {
+      // Not an error, but it did happen once and looked like a hang: the
+      // service was alive and the UI had no idea.
+      AppLogger.w('HashQueue: already running, not starting a second pass');
+      _running = true;
+      notifyListeners();
+      return true;
+    }
 
     // Android 13+ gates the notification, and without a notification there is
     // no foreground service. Asked here rather than at launch, because this is
@@ -167,16 +175,65 @@ class HashQueue extends ChangeNotifier {
       await count();
       return false;
     }
+
+    // If the next line is the last one in the log, the native service came up
+    // and its Dart isolate did not — the notification would sit on "Starting"
+    // forever. That is the failure this line exists to pin down.
+    AppLogger.i('HashQueue: service started, waiting for the task isolate');
     return true;
   }
 
   /// Stop the pass. The backlog is left intact, so starting again resumes it.
+  ///
+  /// **Asks the handler rather than killing the service.** A hard
+  /// `stopService()` tears the task isolate down with eight fetches and their
+  /// decode isolates in flight, and after one of those the plugin would not
+  /// spawn a replacement isolate on the next start. The handler winds its own
+  /// pass down and retires the service; this only falls back to force if it
+  /// does not.
   Future<void> stop() async {
-    await FlutterForegroundTask.stopService();
+    AppLogger.i('HashQueue: stop requested');
+    FlutterForegroundTask.sendDataToTask(HashQueueCommands.stop);
+
+    // The UI says stopped straight away; the drain happens behind it.
     _running = false;
     notifyListeners();
+    unawaited(_ensureStopped());
+  }
+
+  Future<void> _ensureStopped() async {
+    // Long enough for the in-flight fetches to hit their 10s timeout.
+    for (var i = 0; i < 60; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      if (!await FlutterForegroundTask.isRunningService) {
+        AppLogger.i('HashQueue: service retired itself');
+        await count();
+        return;
+      }
+    }
+    AppLogger.w('HashQueue: handler did not retire, forcing the service down');
+    await FlutterForegroundTask.stopService();
     await count();
   }
+
+  // ---------------------------------------------------------------------------
+  // Battery optimisation
+  // ---------------------------------------------------------------------------
+
+  /// Whether Android will let this app work with the screen off.
+  ///
+  /// A foreground service holds a `PARTIAL_WAKE_LOCK`, so the CPU keeps
+  /// running — but Doze still **withholds network** from an app that is not
+  /// exempt, and the fetches simply stop. Samsung is especially aggressive
+  /// about this.
+  Future<bool> get ignoringBatteryOptimizations =>
+      FlutterForegroundTask.isIgnoringBatteryOptimizations;
+
+  /// Ask for the exemption. User-facing and user-initiated by design: this is a
+  /// permission Android expects to be requested for a reason the user
+  /// recognises, not quietly at launch.
+  Future<bool> requestBatteryExemption() =>
+      FlutterForegroundTask.requestIgnoreBatteryOptimization();
 
   /// Re-read the state after a run ends, including one that finished while the
   /// app was in the background and reported to a port nobody was listening on.

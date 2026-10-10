@@ -209,7 +209,9 @@ class HashWorker {
             // docs warn that ignoring it can get an app banned.
             headers: const {'User-Agent': 'MtgHomunculus/1.0'},
           )
-          .timeout(const Duration(seconds: 20));
+          // Short, because a stop can only take effect once the in-flight
+          // fetches drain, and 15 KB has no business taking longer.
+          .timeout(const Duration(seconds: 10));
 
       if (res.statusCode != 200) {
         // 4xx is about this URL and will not improve; 5xx and the rest are

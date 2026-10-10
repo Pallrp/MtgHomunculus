@@ -57,6 +57,10 @@ class _CardDataScreenState extends State<CardDataScreen> {
   CardDataUpdater get _updater => CardDataUpdater.instance;
   HashQueue get _queue => HashQueue.instance;
 
+  /// Null until checked. Governs whether the queue survives the screen going
+  /// off, so it is worth saying out loud rather than letting it fail quietly.
+  bool? _batteryExempt;
+
   @override
   void initState() {
     super.initState();
@@ -110,6 +114,10 @@ class _CardDataScreenState extends State<CardDataScreen> {
     // finished while the app was away, reporting to a port with nobody on the
     // other end.
     await _queue.reconcile();
+
+    final exempt = await _queue.ignoringBatteryOptimizations;
+    if (!mounted) return;
+    setState(() => _batteryExempt = exempt);
   }
 
   // ---------------------------------------------------------------------------
@@ -189,7 +197,15 @@ class _CardDataScreenState extends State<CardDataScreen> {
           ]),
           ListenableBuilder(
             listenable: _queue,
-            builder: (context, _) => _HashSection(queue: _queue),
+            builder: (context, _) => _HashSection(
+              queue: _queue,
+              batteryExempt: _batteryExempt,
+              onRequestExemption: () async {
+                await _queue.requestBatteryExemption();
+                final exempt = await _queue.ignoringBatteryOptimizations;
+                if (mounted) setState(() => _batteryExempt = exempt);
+              },
+            ),
           ),
 
           // Update first: it is the one someone will reach for, and it is the
@@ -513,7 +529,14 @@ class _Running extends StatelessWidget {
 /// which is possible here because both numbers are known.
 class _HashSection extends StatelessWidget {
   final HashQueue queue;
-  const _HashSection({required this.queue});
+  final bool? batteryExempt;
+  final Future<void> Function() onRequestExemption;
+
+  const _HashSection({
+    required this.queue,
+    required this.batteryExempt,
+    required this.onRequestExemption,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -563,6 +586,43 @@ class _HashSection extends StatelessWidget {
           style: PickerTokens.mono(context, size: 11.5)
               .copyWith(color: t.textFaint),
         ),
+        if (batteryExempt == false) ...[
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: t.warningBg,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  // The service holds a wake lock, so the CPU keeps going --
+                  // but Doze withholds the network from an app that is not
+                  // exempt, and the fetches just stop.
+                  'Android will pause this when the screen goes off. Allowing '
+                  'it to run in the background lets it finish unattended.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: t.warning,
+                    height: 1.35,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                TextButton(
+                  onPressed: onRequestExemption,
+                  style: TextButton.styleFrom(
+                    foregroundColor: t.warning,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  child: const Text('Allow background running'),
+                ),
+              ],
+            ),
+          ),
+        ],
         const SizedBox(height: 12),
         OutlinedButton(
           onPressed: queue.start,

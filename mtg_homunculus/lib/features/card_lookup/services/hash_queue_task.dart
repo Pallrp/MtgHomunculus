@@ -36,7 +36,11 @@ class HashQueueTaskHandler extends TaskHandler {
   /// Notification updates are throttled: the worker reports per card, and at
   /// eight concurrent fetches that is dozens a second. Android coalesces
   /// notification updates anyway, and hammering it wastes battery.
-  static const _notifyEvery = 25;
+  ///
+  /// Kept low because with the screen off the notification is the *only* live
+  /// indicator — the UI isolate is suspended and its count goes stale, which
+  /// is why the two numbers disagreed.
+  static const _notifyEvery = 10;
   int _lastNotified = -1;
 
   @override
@@ -99,12 +103,26 @@ class HashQueueTaskHandler extends TaskHandler {
     _worker?.stop();
   }
 
-  /// The notification's stop button, and the only way to interrupt the pass
-  /// from outside this isolate.
+  /// The notification's stop button.
   @override
   void onNotificationButtonPressed(String id) {
     if (id != HashQueueButtons.stop) return;
     AppLogger.i('HashQueueTask: stop pressed');
+    _worker?.stop();
+  }
+
+  /// In-app stop, relayed from the UI isolate.
+  ///
+  /// **Asked, not killed.** Stopping the service from outside tears this
+  /// isolate down mid-flight — eight HTTP gets and their decode isolates — and
+  /// after one of those the plugin failed to spawn a replacement isolate on the
+  /// next start: the notification appeared and `onStart` never ran. Letting the
+  /// handler wind down its own pass and retire the service keeps the teardown
+  /// orderly.
+  @override
+  void onReceiveData(Object data) {
+    if (data != HashQueueCommands.stop) return;
+    AppLogger.i('HashQueueTask: stop requested by the app');
     _worker?.stop();
   }
 
@@ -114,4 +132,8 @@ class HashQueueTaskHandler extends TaskHandler {
 
 abstract final class HashQueueButtons {
   static const stop = 'hash_stop';
+}
+
+abstract final class HashQueueCommands {
+  static const stop = 'stop';
 }
