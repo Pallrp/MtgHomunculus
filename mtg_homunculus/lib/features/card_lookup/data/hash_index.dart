@@ -312,10 +312,15 @@ class HashIndex {
   /// it does not — as in the hash queue, where the cost of reloading forced
   /// batches so large that an interrupted pass threw away everything still
   /// unwritten. Without the reload, appending often is cheap.
-  static Future<bool> appendOnly(Map<String, Uint8List> entries) async {
+  ///
+  /// Pass [at] from a loop, so each append is not a path_provider round trip.
+  static Future<bool> appendOnly(
+    Map<String, Uint8List> entries, {
+    File? at,
+  }) async {
     if (entries.isEmpty) return true;
     try {
-      final f = await file();
+      final f = at ?? await file();
       if (!await f.exists()) return false;
 
       final buf = BytesBuilder(copy: false);
@@ -328,6 +333,51 @@ class HashIndex {
       return true;
     } catch (e, st) {
       AppLogger.w('HashIndex: append failed', error: e, stackTrace: st);
+      return false;
+    }
+  }
+
+  /// Cut a partial record off the end of the file, if a killed append left one.
+  ///
+  /// **Call before the first append of a pass.** [parse] ignores a partial
+  /// tail, but [appendOnly] writes after it — misaligning every later record,
+  /// which `parse` would then read as garbage without a warning.
+  ///
+  /// Returns false when there is no usable file to repair.
+  static Future<bool> repairTail({File? at}) async {
+    try {
+      final f = at ?? await file();
+      if (!await f.exists()) return false;
+
+      final raf = await f.open(mode: FileMode.append);
+      try {
+        final length = await raf.length();
+
+        // Just the header: magic, version length, version, count, hash length.
+        final headMax = _magic.length + 1 + 255 + 4 + 1;
+        await raf.setPosition(0);
+        final head = await raf.read(length < headMax ? length : headMax);
+        if (head.length < _magic.length + 6) return false;
+
+        final vLen = head[_magic.length];
+        final headerLen = _magic.length + 1 + vLen + 4 + 1;
+        if (headerLen > head.length) return false;
+        final hashLen = head[headerLen - 1];
+
+        final recordLen = _idBytes + hashLen;
+        final stray = (length - headerLen) % recordLen;
+        if (stray == 0) return true;
+
+        await raf.truncate(length - stray);
+        await raf.flush();
+        AppLogger.w('HashIndex: cut $stray stray bytes off the tail — '
+            'a killed append');
+        return true;
+      } finally {
+        await raf.close();
+      }
+    } catch (e, st) {
+      AppLogger.w('HashIndex: tail repair failed', error: e, stackTrace: st);
       return false;
     }
   }

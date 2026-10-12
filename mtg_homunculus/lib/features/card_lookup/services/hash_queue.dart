@@ -1,306 +1,287 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/widgets.dart' show AppLifecycleListener;
-import 'package:http/http.dart' as http;
-import 'package:image/image.dart' as img;
+import 'package:flutter/widgets.dart'
+    show AppLifecycleListener, AppLifecycleState, WidgetsBinding;
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
 import '../../../core/logging/app_logger.dart';
-import '../data/cards_database.dart';
-import '../data/hash_index.dart';
-import '../models/scryfall_card.dart';
-import 'dhash.dart';
+import 'hash_queue_task.dart';
+import 'hash_worker.dart';
 
-/// Hashes the printings the shipped index does not cover.
-///
-/// **One trigger: a missing hash.** Not a changed `image_updated_at` and not an
-/// improved `image_status` — replacing a card's art does not change the
-/// physical card the hash is compared against, and `DHash` box-averages into 88
-/// cells, so source resolution is averaged away by construction. The one
-/// genuinely dangerous case, hashing a placeholder, cannot happen:
-/// [CardsDatabase.unhashed] filters `image_status >= 2`, and a placeholder that
-/// *becomes* real art crosses that filter with no hash at all — which is the
-/// missing-hash trigger again. See `local_data_store.md`.
-///
-/// **`small`, not `normal`.** The desktop build fetches 488 × 680 at ~100 KB a
-/// card; the device gets the same 88 cells out of 146 × 204 at ~15 KB. For a
-/// 2,000-card backlog that is ~30 MB of someone's data plan instead of ~200.
+/// What the UI binds to: starts and stops the hash job, and mirrors what the
+/// foreground service reports. The work itself runs in the service — see
+/// [HashQueueTaskHandler] and `.claude/background_processing.md`.
 class HashQueue extends ChangeNotifier {
   HashQueue._();
 
-  /// Never disposed — it outlives every screen, and may keep working while the
-  /// user scans. There is no read/write collision to avoid:
-  /// [HashIndex.append] returns a *new* index rather than mutating the one the
-  /// scanner holds, so a stale in-memory copy costs exactly one frame.
+  /// Never disposed — the service outlives every screen.
   static final HashQueue instance = HashQueue._();
 
-  /// Roughly what one `small` JPEG costs, for the information line. Measured
-  /// loosely and deliberately rounded — the point is the order of magnitude.
-  static const bytesPerCard = 15 * 1024;
+  /// Per-card download size, for the information line.
+  static const bytesPerCard = HashWorker.bytesPerCard;
 
-  /// Hashes written to the index per append.
-  ///
-  /// **Small on purpose.** Interruption is the normal case here — the user
-  /// presses Stop, the app is backgrounded, Android dozes — and anything still
-  /// sitting in the batch when that happens is lost. At 250 an interrupted pass
-  /// duly discarded 124 cards of finished network and CPU work. Ten bounds the
-  /// loss to something not worth noticing, and [HashIndex.appendOnly] makes the
-  /// write cheap enough to do that often.
-  static const _appendEvery = 10;
+  static const _channelId = 'mtg_hash_queue';
 
-  /// Consecutive transient failures before the queue stops on its own.
-  ///
-  /// Lifecycle pausing covers the backgrounding case, but not every way the
-  /// network can vanish — flight mode, a dead hotspot, Scryfall down. This is
-  /// the backstop that does not need to know which.
-  static const _giveUpAfter = 10;
+  /// How long a stop may take before the service is forced down. A last
+  /// resort: a healthy job retires itself within about a second, and a forced
+  /// stop can leave the next start stalled.
+  static const _stopGrace = Duration(seconds: 30);
 
-  CardsDatabase get _db => CardsDatabase.instance;
+  bool _wired = false;
+  AppLifecycleListener? _lifecycle;
 
   bool _running = false;
   bool get running => _running;
 
-  int _remaining = 0;
+  int _hashed = 0;
 
-  /// How many printings still need a hash, or null before the first count.
-  ///
-  /// This is the *Not yet hashed* figure on the card data screen.
-  int? get remaining => _counted ? _remaining : null;
-  bool _counted = false;
+  /// Cards that gained a fingerprint this job — not merely processed.
+  int get hashed => _hashed;
 
   int _done = 0;
   int get done => _done;
 
-  int _hashed = 0;
+  int _total = 0;
+  int get total => _total;
 
-  /// How many actually got a hash, as opposed to merely being *processed*.
-  int get hashed => _hashed;
+  int? _remaining;
 
-  /// Ids whose image will never arrive — a 4xx on a printing the table thinks
-  /// is hashable. Skipped until the next launch, because retrying a 404 inside
-  /// one session spins forever.
-  ///
-  /// **Only permanent failures go in here.** A dropped connection is not one,
-  /// and treating it as one was a real bug: backgrounding the app failed every
-  /// request instantly, and because a *failure is fast* where a success takes
-  /// half a second, the loop tore through a thousand cards in ten seconds and
-  /// marked them all unobtainable.
-  final _unobtainable = <String>{};
+  /// The *Not yet hashed* figure: null before the first count, or with no index.
+  int? get remaining => _remaining;
 
-  /// Paused because the app is not in the foreground.
-  ///
-  /// Android gives a backgrounded app no usable network, so continuing would
-  /// burn the backlog on failures. Nothing is lost by waiting.
-  bool _paused = false;
-  bool get paused => _paused;
+  /// Completes when the running job ends. Null while idle.
+  Completer<void>? _ended;
 
-  Completer<void>? _resumeGate;
-  AppLifecycleListener? _lifecycle;
+  /// A start asked for in the background, waiting for the next resume.
+  Completer<bool>? _deferred;
 
-  void _watchLifecycle() {
-    _lifecycle ??= AppLifecycleListener(
-      onPause: () {
-        if (!_running || _paused) return;
-        _paused = true;
-        _resumeGate = Completer<void>();
-        AppLogger.i('HashQueue: paused, app backgrounded');
-        notifyListeners();
-      },
-      onResume: () {
-        if (!_paused) return;
-        _paused = false;
-        _resumeGate?.complete();
-        _resumeGate = null;
-        AppLogger.i('HashQueue: resumed');
-        notifyListeners();
-      },
+  /// From a start request until the service is up — when "no service" means
+  /// "not yet", not "ended".
+  bool _starting = false;
+
+  // ---------------------------------------------------------------------------
+  // Setup
+  // ---------------------------------------------------------------------------
+
+  /// Call once from `main`, before `runApp`: the port progress arrives on.
+  static void initMessaging() => FlutterForegroundTask.initCommunicationPort();
+
+  void _wire() {
+    if (_wired) return;
+    _wired = true;
+
+    FlutterForegroundTask.init(
+      androidNotificationOptions: AndroidNotificationOptions(
+        channelId: _channelId,
+        channelName: 'Card matching',
+        channelDescription:
+            'Shown while card images are being fetched and matched.',
+        channelImportance: NotificationChannelImportance.LOW,
+        priority: NotificationPriority.LOW,
+        playSound: false,
+        enableVibration: false,
+        showWhen: false,
+        onlyAlertOnce: true,
+      ),
+      iosNotificationOptions: const IOSNotificationOptions(),
+      foregroundTaskOptions: ForegroundTaskOptions(
+        eventAction: ForegroundTaskEventAction.nothing(),
+        // The service keeps the process alive; these keep the CPU and the
+        // Wi-Fi radio awake with the screen off.
+        allowWakeLock: true,
+        allowWifiLock: true,
+        // Jobs start only from the app — never on boot, update or restart.
+        autoRunOnBoot: false,
+        autoRunOnMyPackageReplaced: false,
+        allowAutoRestart: false,
+        // Swiping the app away does not stop the job. Matches the manifest.
+        stopWithTask: false,
+      ),
     );
+
+    FlutterForegroundTask.addTaskDataCallback(_onServiceData);
+    _lifecycle = AppLifecycleListener(onResume: _onResume);
   }
 
-  /// Count the backlog without processing it.
+  void _onServiceData(Object data) {
+    final p = HashProgress.fromMap(data);
+    if (p == null) return;
+
+    _hashed = p.hashed;
+    _done = p.done;
+    _total = p.total;
+    _remaining = p.remaining;
+    _running = !p.finished;
+    notifyListeners();
+
+    if (p.finished) unawaited(_finish());
+  }
+
+  /// Release anyone waiting on the job, and re-count against the index.
+  Future<void> _finish() async {
+    final ended = _ended;
+    _ended = null;
+    _running = false;
+    notifyListeners();
+    await count();
+    if (ended != null && !ended.isCompleted) ended.complete();
+  }
+
+  void _onResume() {
+    final deferred = _deferred;
+    if (deferred != null) {
+      _deferred = null;
+      AppLogger.i('HashQueue: app resumed, starting the deferred job');
+      unawaited(_startNow().then(deferred.complete));
+    }
+    unawaited(reconcile());
+  }
+
+  // ---------------------------------------------------------------------------
+  // Counting
+  // ---------------------------------------------------------------------------
+
+  /// Count the backlog without starting anything. Reads the whole index, so
+  /// only the card data screen and a job's end call it.
   Future<void> count() async {
+    if (_running) return;
     try {
-      final index = await HashIndex.load();
-      if (index == null) {
-        _counted = false;
-        notifyListeners();
-        return;
-      }
-      final indexed = index.ids();
-      final hashable = await _db.hashableIds();
-      _remaining = hashable.where((id) => !indexed.contains(id)).length;
-      _counted = true;
+      _remaining = await HashWorker().count();
       notifyListeners();
     } catch (e, st) {
       AppLogger.w('HashQueue: count failed', error: e, stackTrace: st);
     }
   }
 
-  /// Work the backlog to exhaustion.
+  // ---------------------------------------------------------------------------
+  // Start / stop
+  // ---------------------------------------------------------------------------
+
+  /// Start a job, or attach to the one already running.
   ///
-  /// Safe to call repeatedly; a second call while running is a no-op.
-  Future<void> run() async {
-    if (_running) return;
-    _running = true;
-    _done = 0;
-    _hashed = 0;
-    _watchLifecycle();
-    notifyListeners();
+  /// Android 12+ refuses to start a foreground service from the background, so
+  /// a start asked for there waits for the next resume. Returns false when it
+  /// could not start — most often because notifications are denied.
+  Future<bool> start() async {
+    _wire();
+    AppLogger.i('HashQueue: start requested');
 
-    final client = http.Client();
+    final state = WidgetsBinding.instance.lifecycleState;
+    if (state != null && state != AppLifecycleState.resumed) {
+      AppLogger.i('HashQueue: app in the background, deferring to resume');
+      return (_deferred ??= Completer<bool>()).future;
+    }
+    return _startNow();
+  }
+
+  /// [start], then wait for the job to end — what an Update awaits.
+  Future<void> runToEnd() async {
+    if (!await start()) return;
+    await _ended?.future;
+  }
+
+  Future<bool> _startNow() async {
+    _starting = true;
     try {
-      // Read once, for the backlog. Nothing after this needs the index in
-      // memory, which is why appending never reloads it.
-      final index = await HashIndex.load();
-      if (index == null) {
-        AppLogger.i('HashQueue: no index to append to, nothing to do');
-        return;
-      }
-
-      final pending = await _db.unhashed(index.ids());
-      pending.removeWhere((c) => _unobtainable.contains(c.id));
-      _remaining = pending.length;
-      _counted = true;
-      notifyListeners();
-
-      if (pending.isEmpty) {
-        AppLogger.i('HashQueue: nothing to hash');
-        return;
-      }
-      AppLogger.i('HashQueue: ${pending.length} to hash');
-
-      final batch = <String, Uint8List>{};
-      var consecutiveTransient = 0;
-
-      for (final card in pending) {
-        if (!_running) break; // stopped
-
-        // Hold here rather than failing every request while backgrounded.
-        if (_resumeGate case final gate?) await gate.future;
-        if (!_running) break;
-
-        final outcome = await _hashOne(client, card);
-
-        switch (outcome.kind) {
-          case _FetchKind.ok:
-            batch[card.id] = outcome.hash!;
-            _hashed++;
-            consecutiveTransient = 0;
-          case _FetchKind.permanent:
-            _unobtainable.add(card.id);
-            consecutiveTransient = 0;
-          case _FetchKind.transient:
-            // Left out of `_unobtainable` on purpose: it gets another go on the
-            // next run, within this session.
-            consecutiveTransient++;
-        }
-
-        _done++;
-        _remaining = pending.length - _done;
-        notifyListeners();
-
-        if (batch.length >= _appendEvery) {
-          await HashIndex.appendOnly(batch);
-          batch.clear();
-        }
-
-        // The backstop, independent of knowing *why* the network went away:
-        // if nothing is getting through, stop rather than spending the backlog
-        // on failures at memory speed.
-        if (consecutiveTransient >= _giveUpAfter) {
-          AppLogger.w('HashQueue: $_giveUpAfter failures in a row, stopping');
-          _running = false;
-          break;
-        }
-      }
-
-      if (batch.isNotEmpty) await HashIndex.appendOnly(batch);
-
-      AppLogger.i('HashQueue: hashed $_hashed of $_done processed, '
-          '${_unobtainable.length} unobtainable');
-    } catch (e, st) {
-      AppLogger.w('HashQueue: run failed', error: e, stackTrace: st);
+      return await _startService();
     } finally {
-      client.close();
-      _running = false;
-      _paused = false;
-      _resumeGate?.complete();
-      _resumeGate = null;
-      notifyListeners();
-      // Re-count against the index as it now stands rather than trusting the
-      // running tally, which does not know what an append actually wrote.
-      await count();
+      _starting = false;
     }
   }
 
-  /// Ask the queue to stop at the next card. It leaves the backlog intact.
-  void stop() {
-    if (!_running) return;
-    _running = false;
+  Future<bool> _startService() async {
+    if (await FlutterForegroundTask.isRunningService) {
+      AppLogger.i('HashQueue: already running, attaching');
+      _markRunning();
+      return true;
+    }
+
+    // The notification carries the Stop button; asked for when it matters.
+    final permission =
+        await FlutterForegroundTask.checkNotificationPermission();
+    if (permission != NotificationPermission.granted) {
+      final granted =
+          await FlutterForegroundTask.requestNotificationPermission();
+      if (granted != NotificationPermission.granted) {
+        AppLogger.w('HashQueue: notification permission denied');
+        return false;
+      }
+    }
+
+    _hashed = 0;
+    _done = 0;
+    _total = 0;
+    _markRunning();
+
+    final result = await FlutterForegroundTask.startService(
+      serviceTypes: [ForegroundServiceTypes.dataSync],
+      notificationTitle: 'Matching cards',
+      notificationText: 'Starting…',
+      notificationButtons: [
+        const NotificationButton(id: HashQueueButtons.stop, text: 'Stop'),
+      ],
+      callback: hashQueueCallback,
+    );
+
+    if (result is ServiceRequestFailure) {
+      AppLogger.w('HashQueue: service failed to start: ${result.error}');
+      await _finish();
+      return false;
+    }
+
+    AppLogger.i('HashQueue: service started, waiting for the task isolate');
+    return true;
+  }
+
+  void _markRunning() {
+    _running = true;
+    _ended ??= Completer<void>();
     notifyListeners();
   }
 
-  // ---------------------------------------------------------------------------
-  // One card
-  // ---------------------------------------------------------------------------
+  /// Stop the job. Asks the handler, which winds down and retires the service
+  /// itself; the service is forced down only after [_stopGrace].
+  Future<void> stop() async {
+    AppLogger.i('HashQueue: stop requested');
+    FlutterForegroundTask.sendDataToTask(HashQueueCommands.stop);
+    unawaited(_ensureStopped());
+  }
 
-  Future<_Fetch> _hashOne(http.Client client, Card card) async {
-    final url =
-        ScryfallCard.imageUrlFor(card.id, card.imageUpdatedAt, size: 'small');
-    if (url == null) return const _Fetch.permanent();
-
-    try {
-      final res = await client
-          .get(
-            Uri.parse(url),
-            // Scryfall asks for a naming User-Agent on every request, and the
-            // docs warn that ignoring it can get an app banned.
-            headers: const {'User-Agent': 'MtgHomunculus/1.0'},
-          )
-          .timeout(const Duration(seconds: 20));
-
-      if (res.statusCode != 200) {
-        // 4xx is about this URL and will not improve; 5xx and the rest are
-        // about the server or the connection, and may.
-        final permanent = res.statusCode >= 400 && res.statusCode < 500;
-        AppLogger.w('HashQueue: ${card.id} HTTP ${res.statusCode}'
-            '${permanent ? ' (giving up on it)' : ''}');
-        return permanent ? const _Fetch.permanent() : const _Fetch.transient();
+  Future<void> _ensureStopped() async {
+    final deadline = DateTime.now().add(_stopGrace);
+    while (DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      if (!await FlutterForegroundTask.isRunningService) {
+        AppLogger.i('HashQueue: service retired itself');
+        if (_running) await _finish();
+        return;
       }
+    }
+    AppLogger.w('HashQueue: handler did not retire within '
+        '${_stopGrace.inSeconds}s, forcing the service down');
+    await FlutterForegroundTask.stopService();
+    await _finish();
+  }
 
-      // Off the UI isolate: a decode plus a box average per card, thousands of
-      // times over, would otherwise be felt as jank while the user scans.
-      final hash = await compute(_decodeAndHash, res.bodyBytes);
-      // Bytes arrived and would not decode — that is the image, not the link.
-      return hash == null ? const _Fetch.permanent() : _Fetch.ok(hash);
-    } catch (e) {
-      // Socket errors, DNS failures, timeouts: the connection, not the card.
-      AppLogger.w('HashQueue: ${card.id} fetch failed: $e');
-      return const _Fetch.transient();
+  /// Re-read the service's state on launch and resume: catch a job that ended
+  /// unheard, and re-bind to one still running.
+  Future<void> reconcile() async {
+    _wire();
+    if (_starting) return;
+    final alive = await FlutterForegroundTask.isRunningService;
+    if (alive && !_running) {
+      AppLogger.i('HashQueue: found a running job, re-binding');
+      _markRunning();
+    } else if (!alive && _running) {
+      AppLogger.i('HashQueue: job ended while nobody was listening');
+      await _finish();
     }
   }
-}
 
-enum _FetchKind { ok, permanent, transient }
-
-/// Why a card did or did not get a hash.
-///
-/// The distinction is the whole fix: a permanent failure may be remembered and
-/// skipped, a transient one must not be, or a ten-second network blip burns
-/// through the entire backlog.
-class _Fetch {
-  final _FetchKind kind;
-  final Uint8List? hash;
-
-  const _Fetch.ok(this.hash) : kind = _FetchKind.ok;
-  const _Fetch.permanent() : kind = _FetchKind.permanent, hash = null;
-  const _Fetch.transient() : kind = _FetchKind.transient, hash = null;
-}
-
-/// Top-level for [compute]: JPEG bytes → dHash.
-Uint8List? _decodeAndHash(Uint8List bytes) {
-  final decoded = img.decodeJpg(bytes);
-  if (decoded == null) return null;
-  final gray = DHash.lumaFromRgb(decoded.getBytes(order: img.ChannelOrder.rgb));
-  return DHash.compute(gray, decoded.width, decoded.height);
+  @override
+  void dispose() {
+    _lifecycle?.dispose();
+    super.dispose();
+  }
 }

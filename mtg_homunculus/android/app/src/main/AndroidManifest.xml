@@ -3,6 +3,15 @@
     <uses-permission android:name="android.permission.VIBRATE"/>
     <uses-permission android:name="android.permission.CAMERA"/>
 
+    <!-- The hash job keeps fetching card images while the app is in the
+         background or the screen is off. Android cuts DNS for a backgrounded
+         app, so a foreground service is the only sanctioned way. dataSync,
+         because the job is almost all fetching; POST_NOTIFICATIONS, because the
+         service's notification carries its progress and Stop button. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+
     <application
         android:label="mtg_homunculus"
         android:name="${applicationName}"
@@ -34,6 +43,20 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <!-- Name fixed by the plugin. foregroundServiceType is mandatory from
+             Android 14.
+             stopWithTask false: swiping the app away does not stop the job.
+             With true, Android stops the service from outside, which is the
+             uncontrolled teardown that once left the plugin unable to start
+             its isolate again. The notification's Stop button is the
+             controlled way out. (No double hyphens in here: XML comments
+             cannot contain them, and the manifest merger fails.) -->
+        <service
+            android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
+            android:foregroundServiceType="dataSync"
+            android:exported="false"
+            android:stopWithTask="false"/>
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

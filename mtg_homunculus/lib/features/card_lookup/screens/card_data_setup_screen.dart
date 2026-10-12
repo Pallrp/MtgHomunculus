@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../../core/logging/app_logger.dart';
 import '../data/bulk_importer.dart';
 import '../data/cards_database.dart';
 import '../data/hash_index.dart';
+import '../services/hash_queue.dart';
 
 /// First-run card data setup.
 ///
@@ -77,6 +80,12 @@ class _CardDataSetupScreenState extends State<CardDataSetupScreen> {
 
       if (!mounted) return;
       setState(() => _progress = const ImportProgress(ImportStep.done));
+
+      // The index is always older than the bulk file, so the printings newer
+      // than it start hashing straight away. The app is usable meanwhile; they
+      // fall through to OCR until they land.
+      if (ok) unawaited(HashQueue.instance.start());
+
       widget.onReady();
       return;
     } catch (e, st) {

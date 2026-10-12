@@ -183,28 +183,41 @@ class _CardDataScreenState extends State<CardDataScreen> {
             _Row(label: 'Hash version', value: _hashVersion ?? '—'),
             _Row(label: 'Database size', value: _megabytes(_dbBytes)),
           ]),
+          // The Update and the hash job block each other, so all three
+          // controls below listen to both.
           ListenableBuilder(
-            listenable: _queue,
-            builder: (context, _) => _HashSection(queue: _queue),
+            listenable: Listenable.merge([_queue, _updater]),
+            builder: (context, _) => _HashSection(
+              queue: _queue,
+              updating: _updater.phase == UpdatePhase.running,
+            ),
           ),
 
           // Update first: it is the one someone will reach for, and it is the
           // safe one. Re-download sits below it, in the destructive colour.
           ListenableBuilder(
-            listenable: _updater,
-            builder: (context, _) => _UpdateControl(updater: _updater),
+            listenable: Listenable.merge([_queue, _updater]),
+            builder: (context, _) => _UpdateControl(
+              updater: _updater,
+              hashing: _queue.running,
+            ),
           ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-            child: OutlinedButton.icon(
-              onPressed: _confirmReDownload,
-              icon: const Icon(Icons.refresh_rounded, size: 18),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: t.vermilion,
-                side: BorderSide(color: t.vermilion),
-                minimumSize: const Size.fromHeight(46),
+          ListenableBuilder(
+            listenable: _queue,
+            builder: (context, _) => Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+              child: OutlinedButton.icon(
+                // Re-download deletes the index the hash job is appending to,
+                // and the database it read its backlog from.
+                onPressed: _queue.running ? null : _confirmReDownload,
+                icon: const Icon(Icons.refresh_rounded, size: 18),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: t.vermilion,
+                  side: BorderSide(color: t.vermilion),
+                  minimumSize: const Size.fromHeight(46),
+                ),
+                label: const Text('Re-download card data'),
               ),
-              label: const Text('Re-download card data'),
             ),
           ),
         ],
@@ -319,7 +332,11 @@ class _Row extends StatelessWidget {
 /// never have to find out where the reply went.
 class _UpdateControl extends StatelessWidget {
   final CardDataUpdater updater;
-  const _UpdateControl({required this.updater});
+
+  /// A hash job is running. *Update* is blocked until it ends.
+  final bool hashing;
+
+  const _UpdateControl({required this.updater, required this.hashing});
 
   @override
   Widget build(BuildContext context) {
@@ -367,12 +384,16 @@ class _UpdateControl extends StatelessWidget {
               ),
               const SizedBox(width: 10),
               FilledButton(
-                onPressed: updater.start,
+                onPressed: hashing ? null : updater.start,
                 child: const Text('Update'),
               ),
             ],
           ),
-        UpdatePhase.running => _Running(progress: updater.progress),
+        UpdatePhase.running => updater.matching
+            // The import is done; its hash job is the last step, and the
+            // section above carries that job's progress and Stop.
+            ? const _Said(text: 'Matching new cards…', busy: true)
+            : _Running(progress: updater.progress),
         UpdatePhase.failed => Row(
             children: [
               Expanded(
@@ -509,7 +530,11 @@ class _Running extends StatelessWidget {
 /// which is possible here because both numbers are known.
 class _HashSection extends StatelessWidget {
   final HashQueue queue;
-  const _HashSection({required this.queue});
+
+  /// An Update is running. *Fetch and match* is blocked until it ends.
+  final bool updating;
+
+  const _HashSection({required this.queue, required this.updating});
 
   @override
   Widget build(BuildContext context) {
@@ -561,7 +586,8 @@ class _HashSection extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         OutlinedButton(
-          onPressed: queue.run,
+          // An Update ends in a hash job of its own, so this waits for it.
+          onPressed: updating ? null : queue.start,
           style: OutlinedButton.styleFrom(
             minimumSize: const Size.fromHeight(42),
           ),
@@ -604,17 +630,17 @@ class _HashSection extends StatelessWidget {
         const SizedBox(height: 10),
         Row(
           children: [
-            if (queue.paused)
-              Expanded(
-                child: Text(
-                  // Not a stall: a backgrounded app has no usable network, and
-                  // hammering it would spend the backlog on failures.
-                  'Paused while the app is in the background',
-                  style: TextStyle(fontSize: 11, color: t.textFaint),
-                ),
-              )
-            else
-              const Spacer(),
+            Expanded(
+              child: Text(
+                // It survives leaving: the job runs in a foreground service,
+                // so the screen going off or another app does not stop it.
+                queue.total == 0
+                    ? 'Starting…'
+                    : '${queue.total - queue.done} left · continues in the '
+                        'background',
+                style: TextStyle(fontSize: 11, color: t.textFaint),
+              ),
+            ),
             TextButton(
               onPressed: queue.stop,
               child: const Text('Stop'),
@@ -623,12 +649,9 @@ class _HashSection extends StatelessWidget {
         ),
       ];
 
-  double? get _fraction {
-    final left = queue.remaining;
-    if (left == null) return null;
-    final total = queue.done + left;
-    return total == 0 ? null : queue.done / total;
-  }
+  /// Indeterminate until the first report says how big the backlog is.
+  double? get _fraction =>
+      queue.total == 0 ? null : queue.done / queue.total;
 
   static String _size(int cards) {
     final mb = cards * HashQueue.bytesPerCard / (1024 * 1024);

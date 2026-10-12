@@ -204,6 +204,55 @@ void main() {
       ? false
       : 'assets/hash_index.bin not built');
 
+  group('repairTail', () {
+    late Directory dir;
+    late File f;
+    setUp(() {
+      dir = Directory.systemTemp.createTempSync('hash_index_test');
+      f = File('${dir.path}/hash_index.bin');
+    });
+    tearDown(() => dir.deleteSync(recursive: true));
+
+    test('cuts a partial record off the tail', () async {
+      final full = buildIndex([(uuid(1), zero), (uuid(2), zero)]);
+      // A killed append: 20 bytes of a third record.
+      f.writeAsBytesSync([...full, ...Uint8List(20)]);
+
+      expect(await HashIndex.repairTail(at: f), isTrue);
+      expect(f.lengthSync(), full.length);
+    });
+
+    test('leaves a whole file untouched', () async {
+      final full = buildIndex([(uuid(1), zero), (uuid(2), hashWithBits(3))]);
+      f.writeAsBytesSync(full);
+
+      expect(await HashIndex.repairTail(at: f), isTrue);
+      expect(f.readAsBytesSync(), full);
+    });
+
+    test('appends after a repair land on the right boundary', () async {
+      // The bug this exists for: parse() tolerates a partial tail, but an
+      // append written after it shifts every later record, and those parse as
+      // garbage with nothing to say so.
+      final full = buildIndex([(uuid(1), zero)]);
+      final appended = Uint8List.sublistView(
+          buildIndex([(uuid(1), zero), (uuid(2), hashWithBits(3))]),
+          full.length);
+
+      f.writeAsBytesSync([...full, ...Uint8List(7)]);
+      await HashIndex.repairTail(at: f);
+      f.writeAsBytesSync(appended, mode: FileMode.append);
+
+      final idx = HashIndex.parse(f.readAsBytesSync())!;
+      expect(idx.ids(), {uuid(1), uuid(2)});
+      expect(idx.nearest(hashWithBits(3), threshold: 0).single.id, uuid(2));
+    });
+
+    test('no file is false, not a crash', () async {
+      expect(await HashIndex.repairTail(at: f), isFalse);
+    });
+  });
+
   group('ids', () {
     test('round-trip the uuid encoding', () {
       final idx = HashIndex.parse(buildIndex([

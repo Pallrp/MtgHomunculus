@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui' show PlatformDispatcher;
 
 import 'package:flutter/material.dart';
@@ -7,6 +8,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'app_shell.dart';
+import 'features/card_lookup/services/hash_queue.dart';
 import 'features/card_lookup/theme/picker_tokens.dart';
 import 'core/logging/app_logger.dart';
 import 'features/settings/models/app_settings.dart';
@@ -15,6 +17,10 @@ import 'features/settings/models/setting_enums.dart';
 import 'features/settings/services/settings_service.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Before anything could start the hash job's foreground service: this
+  // registers the port its isolate reports progress down.
+  HashQueue.initMessaging();
 
   // ---------------------------------------------------------------------------
   // Global error hooks — analogous to server-side exception middleware.
@@ -45,6 +51,10 @@ void main() async {
   final loaded  = await SettingsService.load();
   final docsDir = await getApplicationDocumentsDirectory();
   AppLogger.configure(level: loaded.app.logLevel, logDir: docsDir.path);
+
+  // A hash job outlives the app's UI: re-bind to one still running, so a
+  // reopened app shows it rather than offering to start another.
+  unawaited(HashQueue.instance.reconcile());
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,

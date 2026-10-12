@@ -60,6 +60,11 @@ dependencies:
   cached_network_image: ^3.4.1
   flutter_cache_manager: ^3.4.1
 
+  # Keeps the hash job fetching with the screen off or the app in the
+  # background -- Android cuts DNS for a background app. 10, not 11: 11 needs
+  # Dart 3.12. See .claude/background_processing.md.
+  flutter_foreground_task: ^10.0.0
+
 
 dev_dependencies:
   flutter_test:

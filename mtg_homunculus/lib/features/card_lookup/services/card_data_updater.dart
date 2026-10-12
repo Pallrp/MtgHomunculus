@@ -63,6 +63,11 @@ class CardDataUpdater extends ChangeNotifier {
   ImportProgress? _progress;
   ImportProgress? get progress => _progress;
 
+  /// The import is done and the hash job it started is running — the Update's
+  /// last step. [phase] stays [UpdatePhase.running] through it.
+  bool _matching = false;
+  bool get matching => _matching;
+
   Object? _error;
   Object? get error => _error;
 
@@ -186,7 +191,9 @@ class CardDataUpdater extends ChangeNotifier {
   /// Re-compares the ETag first: the badge may be days old and the remote file
   /// may have settled since, and 78 MB is not worth spending on a stale signal.
   Future<void> start() async {
-    if (busy) return;
+    // Not while a hash job runs either: the Update would end in a job of its
+    // own, and there is never a second one. See background_processing.md.
+    if (busy || HashQueue.instance.running) return;
     _phase = UpdatePhase.checking;
     _error = null;
     notifyListeners();
@@ -222,16 +229,27 @@ class CardDataUpdater extends ChangeNotifier {
       await _db.setMeta(MetaKeys.pendingEtag, '');
       await _stampChecked();
       _updateAvailable = false;
-      _phase = UpdatePhase.upToDate;
       _progress = null;
-      notifyListeners();
-      _outcomes.add(CardDataOutcome.updated);
 
       // The import is what creates a backlog: whatever printings it just added
-      // have no hash. Starting straight away is the point — the user has
-      // already opted into fetching card data, and leaving the queue for them
-      // to find later would mean a week of scans silently falling back to OCR.
-      unawaited(HashQueue.instance.run());
+      // have no hash. Hashing them is the Update's last step, not a chore left
+      // for the user to find — that would mean a week of scans silently
+      // falling back to OCR. The Update is not finished until the job exits.
+      //
+      // A failure in the job does not fail the Update: the database is
+      // complete, and unhashed cards stay in *Not yet hashed*.
+      _matching = true;
+      notifyListeners();
+      try {
+        await HashQueue.instance.runToEnd();
+      } catch (e, st) {
+        AppLogger.w('CardDataUpdater: hash job failed', error: e, stackTrace: st);
+      }
+      _matching = false;
+
+      _phase = UpdatePhase.upToDate;
+      notifyListeners();
+      _outcomes.add(CardDataOutcome.updated);
     } catch (e, st) {
       AppLogger.w('CardDataUpdater: update failed', error: e, stackTrace: st);
       // The database is still entirely valid — the import writes by primary key
