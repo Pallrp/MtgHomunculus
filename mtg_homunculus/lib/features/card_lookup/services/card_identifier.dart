@@ -376,8 +376,7 @@ class CardIdentifier {
 
     final query = CardsDatabase.normaliseName(ocr.name);
     final ranked = [
-      for (final n in names)
-        (n, _editDistance(query, CardsDatabase.normaliseName(n), 12)),
+      for (final n in names) (n, _nameDistance(query, n)),
     ]..sort((a, b) => a.$2.compareTo(b.$2));
 
     // Anything much worse than the best is not the same card.
@@ -389,6 +388,28 @@ class CardIdentifier {
       for (final r in ranked)
         if (r.$2 <= bestDist + 2) r.$1,
     ].take(4).toList();
+  }
+
+  /// Edit distance from [query] to the nearest **face** of [name].
+  ///
+  /// A double-faced card is stored as `Front // Back`, but the camera sees one
+  /// face. Measured against the joined string, a perfect read is as far away as
+  /// the other face is long: `Sidequest: Card Collection` sits 14 edits from
+  /// `Sidequest: Card Collection // Magicked Card`, outside both cutoffs, so
+  /// the name could neither find the card nor veto a wrong hash match for it.
+  /// Seen in the field 2026-10-15 — fin/73 was added as The Balrog and as Cat
+  /// Collector. Around 950 names are joined this way.
+  ///
+  /// The joined form still competes, for a split card read across both halves.
+  static int _nameDistance(String query, String name) {
+    var best = _editDistance(query, CardsDatabase.normaliseName(name), 12);
+    final faces = name.split(' // ');
+    if (faces.length < 2) return best;
+    for (final f in faces) {
+      final d = _editDistance(query, CardsDatabase.normaliseName(f), 12);
+      if (d < best) best = d;
+    }
+    return best;
   }
 
   /// Name path: trigram retrieval, then edit-distance rerank, then the same
@@ -415,8 +436,13 @@ class CardIdentifier {
     _recognizer ??= TextRecognizer(script: TextRecognitionScript.latin);
     final name = await _recognise(CardWarp.nameBand(card));
     final band = await _recognise(CardWarp.collectorBand(card));
+    // Raw, before parsing: a misparse is otherwise indistinguishable from a
+    // misread, and every diagnosis of the name path starts from what was seen.
+    AppLogger.d('OCR: name="${_oneLine(name)}"  band="${_oneLine(band)}"');
     return _Ocr.parse(name, band);
   }
+
+  static String _oneLine(String s) => s.replaceAll('\n', ' | ');
 
   Future<String> _recognise(cv.Mat region) async {
     File? tmp;
@@ -491,13 +517,25 @@ class _Ocr {
   /// rarely right. Only the numerator and set code are used — the denominator is
   /// the set's printed size, which is not a clean 1..N across promo and variant
   /// runs and is deliberately not matched against.
+  ///
+  /// Cards from 2023 on print no denominator at all — `0073 U` over `FIN • EN`,
+  /// always zero-padded to four digits. The slash form is tried first; the bare
+  /// form must be exactly four digits, so stray one- and two-digit noise in the
+  /// band is not taken for a number. The band stops at 44% of the width, well
+  /// short of the copyright year on the right.
+  ///
+  /// The padding zero is often read as a letter O, and the rarity letter runs
+  /// into it: `M 0296` arrives as `MO296` (measured 2026-10-15, two frames of
+  /// three). So a leading O counts as a zero — only a leading one, and only
+  /// ahead of three real digits, which no word on that line looks like.
   factory _Ocr.parse(String nameText, String bandText) {
     final name = nameText
         .split('\n')
         .map((l) => l.trim())
         .firstWhere((l) => l.length > 2, orElse: () => '');
 
-    final num = RegExp(r'(\d{1,4})\s*/\s*\d{1,4}').firstMatch(bandText);
+    final num = RegExp(r'(\d{1,4})\s*/\s*\d{1,4}').firstMatch(bandText) ??
+        RegExp(r'(?<![\d/])([\dOo]\d{3})(?![\d/])').firstMatch(bandText);
     final set = RegExp(r'\b([A-Za-z]{3,5})\b')
         .allMatches(bandText.split('\n').length > 1
             ? bandText.split('\n')[1]
@@ -509,7 +547,8 @@ class _Ocr {
     return _Ocr(
       '$nameText\n$bandText'.trim(),
       name,
-      num?.group(1)?.replaceFirst(RegExp(r'^0+(?=\d)'), ''),
+      num?.group(1)?.replaceFirst(RegExp(r'^[Oo]'), '0')
+          .replaceFirst(RegExp(r'^0+(?=\d)'), ''),
       set,
     );
   }

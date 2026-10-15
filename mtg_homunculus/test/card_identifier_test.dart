@@ -152,6 +152,132 @@ void main() {
     });
   });
 
+  group('modern collector line — no denominator', () {
+    setUp(() => seed([
+          ('a', 'Colossal Dreadmaw', 'xln', '180'),
+          ('b', 'Colossal Dreadmaw', 'fdn', '73'),
+        ]));
+
+    test('a bare zero-padded number is read', () async {
+      // Cards from 2023 on print `0073 U` over `FIN • EN` — no slash.
+      final id = ocrOnly();
+      final r = await id.identifyForTest(
+        nameText: 'Colossal Dreadmaw',
+        bandText: '0073 U\nFDN • EN',
+      );
+      expect(r.readCollectorNumber, '73');
+      expect(r.candidates.single.id, 'b');
+      await id.dispose();
+    });
+
+    test('the rarity letter may come first', () async {
+      final id = ocrOnly();
+      final r = await id.identifyForTest(
+        nameText: 'Colossal Dreadmaw',
+        bandText: 'U 0073\nFDN • EN',
+      );
+      expect(r.readCollectorNumber, '73');
+      await id.dispose();
+    });
+
+    test('a padding zero read as O, run into the rarity, still counts',
+        () async {
+      // `M 0296` arrived as `MO296` on two of three Wistfulness frames.
+      final id = ocrOnly();
+      final r = await id.identifyForTest(
+        nameText: 'Colossal Dreadmaw',
+        bandText: 'MO073\nFDN EN PAOLO PARENTE',
+      );
+      expect(r.readCollectorNumber, '73');
+      expect(r.candidates.single.id, 'b');
+      await id.dispose();
+    });
+
+    test('an O is only a zero in the leading place', () async {
+      final id = ocrOnly();
+      final r = await id.identifyForTest(
+        nameText: 'Colossal Dreadmaw',
+        bandText: 'U 0O73\nFDN EN',
+      );
+      expect(r.readCollectorNumber, isNull);
+      await id.dispose();
+    });
+
+    test('the slash form still wins when both are present', () async {
+      final id = ocrOnly();
+      final r = await id.identifyForTest(
+        nameText: 'Colossal Dreadmaw',
+        bandText: '2019 180/279 C\nXLN EN',
+      );
+      expect(r.readCollectorNumber, '180');
+      await id.dispose();
+    });
+
+    test('short digit noise is not taken for a number', () async {
+      final id = ocrOnly();
+      final r = await id.identifyForTest(
+        nameText: 'Colossal Dreadmaw',
+        bandText: '73 U\nFDN • EN',
+      );
+      expect(r.readCollectorNumber, isNull);
+      await id.dispose();
+    });
+  });
+
+  group('double-faced cards — fin/73 in the field, 2026-10-15', () {
+    // A white-paper scan of Sidequest: Card Collection added The Balrog at
+    // d=24 and then Cat Collector by name. The stored name joins both faces,
+    // so a correct read of one face never resolved.
+    setUp(() => seed([
+          ('fin73', 'Sidequest: Card Collection // Magicked Card', 'fin', '73'),
+          ('balrog', 'The Balrog, Flame of Udûn', 'pltc', '4'),
+          ('cat', 'Cat Collector', 'fdn', '4'),
+        ]));
+
+    test('a read of the front face resolves by name', () async {
+      final id = ocrOnly();
+      final r = await id.identifyForTest(
+        nameText: 'Sidequest: Card Collection',
+        bandText: '',
+      );
+      expect(r.via, IdentifiedVia.ocr);
+      expect(r.candidates.single.id, 'fin73');
+      await id.dispose();
+    });
+
+    test('a read of the back face resolves too', () async {
+      final id = ocrOnly();
+      final r = await id.identifyForTest(
+        nameText: 'Magicked Card',
+        bandText: '',
+      );
+      expect(r.candidates.single.id, 'fin73');
+      await id.dispose();
+    });
+
+    test('the front face vetoes a hash match for another card', () async {
+      final id = ocrOnly();
+      final r = await id.identifyForTest(
+        nameText: 'Sidequest: Card Collection',
+        bandText: '',
+        hashHits: const [HashMatch('balrog', 24)],
+      );
+      expect(r.best?.id, 'fin73');
+      await id.dispose();
+    });
+
+    test('a modern collector number vetoes it with no name at all', () async {
+      final id = ocrOnly();
+      final r = await id.identifyForTest(
+        nameText: '',
+        bandText: '0073 U\nFIN • EN',
+        hashHits: const [HashMatch('balrog', 24)],
+      );
+      expect(r.candidates, isEmpty);
+      await id.dispose();
+    });
+  });
+
   group('the hash cross-check — five wrong adds, 2026-08-26', () {
     // Each of these is a confident wrong add that reached a real list. The
     // hash is the signal that goes wrong quietly, so it is cross-checked
