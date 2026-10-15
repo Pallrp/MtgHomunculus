@@ -52,6 +52,7 @@ class _CardDataScreenState extends State<CardDataScreen> {
 
   int? _hashEntries;
   String? _hashVersion;
+  int? _hashBytes;
 
 
   CardDataUpdater get _updater => CardDataUpdater.instance;
@@ -96,10 +97,13 @@ class _CardDataScreenState extends State<CardDataScreen> {
     // Index second: it is the slow half, and the panel above is already legible
     // without it.
     final index = await HashIndex.load();
+    final indexFile = await HashIndex.file();
+    final indexBytes = await indexFile.exists() ? await indexFile.length() : null;
     if (!mounted) return;
     setState(() {
       _hashEntries = index?.count;
       _hashVersion = index == null ? null : DHash.version;
+      _hashBytes = indexBytes;
     });
 
     // And the backlog last. It needs every id in the index plus every hashable
@@ -182,6 +186,7 @@ class _CardDataScreenState extends State<CardDataScreen> {
             _Row(label: 'Imported', value: _date(_importedAt)),
             _Row(label: 'Hash version', value: _hashVersion ?? '—'),
             _Row(label: 'Database size', value: _megabytes(_dbBytes)),
+            _Row(label: 'Index size', value: _megabytes(_hashBytes)),
           ]),
           // The Update and the hash job block each other, so all three
           // controls below listen to both.
