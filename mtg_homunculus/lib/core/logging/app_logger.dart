@@ -96,7 +96,9 @@ class AppLogger {
 
     return Logger(
       level:   loggerLevel,
-      output:  outputs.length == 1 ? outputs.first : MultiOutput(outputs),
+      output:  _RedactingOutput(
+        outputs.length == 1 ? outputs.first : MultiOutput(outputs),
+      ),
       printer: SimplePrinter(colors: false, printTime: true),
     );
   }
@@ -132,6 +134,53 @@ class AppLogger {
       return 0;
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Redaction — between every printer and every output.
+// ---------------------------------------------------------------------------
+
+/// Masks credentials before a line reaches the file or the console.
+///
+/// **A backstop, not the plan.** The Deckbox client never logs headers, bodies
+/// or cookie values in the first place. This exists because `app_log.txt` is
+/// Verbose and gets pulled off the device over ADB, and one careless
+/// interpolation — an exception message quoting a request — is all it takes.
+///
+/// Patterns rather than known values, so nothing secret has to be held here to
+/// recognise it: a `name=value` or `name: value` for each credential-shaped
+/// name, and the inline `setCsrf("…")` Deckbox pages carry.
+class _RedactingOutput extends LogOutput {
+  _RedactingOutput(this._inner);
+
+  final LogOutput _inner;
+
+  static final _patterns = [
+    RegExp(
+      r'''((?:_tcg_session|authenticity_token|password|csrf[-_]?token)['"]?\s*(?:=|:)\s*['"]?)[^\s&;'"]+''',
+      caseSensitive: false,
+    ),
+    RegExp(r'''(setCsrf\(\s*["'])[^"']+'''),
+    RegExp(r'((?:^|\s)(?:cookie|set-cookie)\s*:\s*)[^\n]+', caseSensitive: false),
+  ];
+
+  static String _redact(String line) {
+    var out = line;
+    for (final p in _patterns) {
+      out = out.replaceAllMapped(p, (m) => '${m[1]}[redacted]');
+    }
+    return out;
+  }
+
+  @override
+  Future<void> init() => _inner.init();
+
+  @override
+  Future<void> destroy() => _inner.destroy();
+
+  @override
+  void output(OutputEvent event) =>
+      _inner.output(OutputEvent(event.origin, event.lines.map(_redact).toList()));
 }
 
 // ---------------------------------------------------------------------------

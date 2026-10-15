@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../debug/deckbox_spike_screen.dart';
 import '../data/collection_database.dart';
 import '../models/dev_flags.dart';
 import '../models/scan_defaults.dart';
@@ -503,6 +504,25 @@ class ListingSheet extends StatelessWidget {
                 value: on,
                 onChanged: DevFlags.setTuningTools,
               ),
+            ),
+            // The Deckbox spikes ride on the same developer switch rather
+            // than adding a second one to a menu that is not about Deckbox.
+            ValueListenableBuilder<bool>(
+              valueListenable: DevFlags.tuningTools,
+              // `context` below is the sheet's caller, not this builder's —
+              // the sheet is gone by the time the push runs.
+              builder: (_, on, _) => on
+                  ? ListTile(
+                      leading: const Icon(Icons.science_outlined),
+                      title: const Text('Deckbox spike'),
+                      onTap: () {
+                        Navigator.of(sheetContext).pop();
+                        Navigator.of(context).push(MaterialPageRoute<void>(
+                          builder: (_) => const DeckboxSpikeScreen(),
+                        ));
+                      },
+                    )
+                  : const SizedBox.shrink(),
             ),
           ],
         ),

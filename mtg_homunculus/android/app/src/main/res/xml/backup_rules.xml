@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Auto Backup on Android 11 and below. Everything is backed up as before,
+     except flutter_secure_storage's files: they hold the Deckbox session
+     encrypted with a Keystore key that never leaves the phone, so a restored
+     copy could not be decrypted. Data first, then its wrapped key. -->
+<full-backup-content>
+    <exclude domain="sharedpref" path="FlutterSecureStorage.xml"/>
+    <exclude domain="sharedpref" path="FlutterSecureKeyStorage.xml"/>
+</full-backup-content>

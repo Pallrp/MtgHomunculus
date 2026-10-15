@@ -64,6 +64,7 @@ dependencies:
   # background -- Android cuts DNS for a background app. 10, not 11: 11 needs
   # Dart 3.12. See .claude/background_processing.md.
   flutter_foreground_task: ^10.0.0
+  flutter_secure_storage: ^10.3.4
 
 
 dev_dependencies:
