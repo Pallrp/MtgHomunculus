@@ -86,7 +86,9 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
   List<Entry>  _entries       = const [];
   StreamSubscription<List<Entry>>? _entriesSub;
   bool         _loading       = true;
-  bool         _cameraActive  = true;
+  /// Off at first: a list opens on its cards, and the camera starts when the
+  /// sheet is lowered.
+  bool         _cameraActive  = false;
 
   EntrySort    _sort          = EntrySort.scanned;
   Set<int>     _selected      = const {};
@@ -374,7 +376,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
           // Draggable listing sheet.
           DraggableScrollableSheet(
             controller:       _sheetController,
-            initialChildSize: minSheet,
+            initialChildSize: _maxSheetSize,
             minChildSize:     minSheet,
             maxChildSize:     _maxSheetSize,
             snap:             true,

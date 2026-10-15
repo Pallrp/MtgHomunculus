@@ -41,6 +41,10 @@ import 'tuning_panel.dart';
 ///
 /// **Responsibilities**
 /// - Initialises and owns the [CameraController] (one init, never recreated).
+/// - **Releases the camera while inactive**: the stream stops and the preview
+///   pauses, which on CameraX unbinds every use case and closes the device —
+///   browsing an open list costs no camera power. The controller itself stays,
+///   so coming back is a rebind, not a second init.
 /// - Starts / stops the image stream based on [isActive] (the parent ties this
 ///   to whether the bottom sheet handle is fully down).
 /// - Streams frames → [CardDetector] at ~2 fps → [CardBorderPainter].
@@ -289,19 +293,38 @@ class ScannerOverlayState extends State<ScannerOverlay> {
 
     if (!mounted) return;
     setState(() => _cameraReady = true);
-    if (widget.isActive) _startStream();
+    _applyActive();
   }
 
   @override
   void didUpdateWidget(ScannerOverlay oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (!_cameraReady || oldWidget.isActive == widget.isActive) return;
+    _applyActive();
+  }
 
-    if (widget.isActive) {
-      _startStream();
-    } else if (!widget.isActive) {
-      _stopStream();
-    }
+  /// Camera calls in flight, one after another — a quick drag up and down
+  /// must not interleave a pause with a resume.
+  Future<void> _cameraOps = Future.value();
+
+  /// Brings the camera in line with [ScannerOverlay.isActive]: streaming with a
+  /// live preview, or neither — the device released.
+  void _applyActive() {
+    _cameraOps = _cameraOps.then((_) async {
+      final c = _controller;
+      if (!mounted || c == null || !_cameraReady) return;
+      try {
+        if (widget.isActive) {
+          if (c.value.isPreviewPaused) await c.resumePreview();
+          if (mounted && widget.isActive) _startStream();
+        } else {
+          _stopStream();
+          if (!c.value.isPreviewPaused) await c.pausePreview();
+        }
+      } catch (e, st) {
+        AppLogger.w('ScannerOverlay: camera pause/resume failed', error: e, stackTrace: st);
+      }
+    });
   }
 
   @override
