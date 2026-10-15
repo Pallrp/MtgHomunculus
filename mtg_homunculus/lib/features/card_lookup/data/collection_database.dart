@@ -5,6 +5,9 @@ import 'package:drift/native.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import '../external/external_dao.dart';
+import '../external/external_tables.dart';
+
 part 'collection_database.g.dart';
 
 // ---------------------------------------------------------------------------
@@ -234,7 +237,13 @@ class Entries extends Table {
 ///
 /// Deliberately separate from `cards.db`, which is a disposable cache of
 /// Scryfall's bulk data. Wiping that must never cost a user their collection.
-@DriftDatabase(tables: [Lists, Entries])
+///
+/// Also home to the **mirrors of Deckbox lists** (`external_tables.dart`), with
+/// their queries in [ExternalDao] — one precious file, two vocabularies.
+@DriftDatabase(
+  tables: [Lists, Entries, ExternalAccounts, ExternalLists, ExternalEntries],
+  daos: [ExternalDao],
+)
 class CollectionDatabase extends _$CollectionDatabase {
   CollectionDatabase() : super(_open());
   CollectionDatabase.forTesting(super.executor);
@@ -249,11 +258,22 @@ class CollectionDatabase extends _$CollectionDatabase {
   /// lazy, so this costs nothing until the card lookup is entered.
   static CollectionDatabase get instance => _instance ??= CollectionDatabase();
 
+  /// 1 — app lists. 2 — the Deckbox mirror tables (M2, 2026-10-15).
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
+        onCreate: (m) => m.createAll(),
+        // **Only ever adds.** 1 → 2 creates three new tables and touches
+        // nothing that holds the user's lists.
+        onUpgrade: (m, from, to) async {
+          if (from < 2) {
+            await m.createTable(externalAccounts);
+            await m.createTable(externalLists);
+            await m.createTable(externalEntries);
+          }
+        },
         beforeOpen: (details) async {
           // Required for the entries -> lists cascade; SQLite defaults it off.
           await customStatement('PRAGMA foreign_keys = ON');

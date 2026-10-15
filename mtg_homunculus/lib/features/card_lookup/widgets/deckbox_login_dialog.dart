@@ -1,22 +1,28 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/logging/app_logger.dart';
+import '../data/collection_database.dart';
 import '../external/deckbox/deckbox_client.dart';
-import '../external/session_store.dart';
+import '../external/deckbox_sync.dart';
+
+/// What a successful login hands back: the account it saved, and the login's
+/// own result for a caller that wants the details (the spike screen records
+/// the redirect chain).
+typedef DeckboxLogin = ({DeckboxLoginResult result, ExternalAccount account});
 
 /// "Add Deckbox account" — the login bubble, shaped like *New listing*.
 ///
-/// On success the session is saved and the dialog pops with the
-/// [DeckboxLoginResult], so a caller that wants the details (the spike screen
-/// records the redirect chain) has them. Null means cancelled.
+/// UI only: [DeckboxSync.login] signs in, saves the session and records the
+/// account and its lists. The dialog pops with them on success; null means
+/// cancelled.
 ///
 /// **The password lives in the text field and the one request, nowhere else.**
 /// It is not logged, not stored, not part of the result.
 class DeckboxLoginDialog extends StatefulWidget {
   const DeckboxLoginDialog({super.key});
 
-  static Future<DeckboxLoginResult?> show(BuildContext context) =>
-      showDialog<DeckboxLoginResult>(
+  static Future<DeckboxLogin?> show(BuildContext context) =>
+      showDialog<DeckboxLogin>(
         context: context,
         barrierDismissible: false,
         builder: (_) => const DeckboxLoginDialog(),
@@ -50,12 +56,12 @@ class _DeckboxLoginDialogState extends State<DeckboxLoginDialog> {
       _error = null;
     });
 
-    final client = DeckboxClient(onLog: AppLogger.d);
     try {
-      final result = await client.login(_login.text.trim(), _password.text);
+      final (:result, :account) =
+          await DeckboxSync.instance.login(_login.text.trim(), _password.text);
       if (!mounted) return;
 
-      if (result.state != DeckboxSessionState.signedIn) {
+      if (account == null) {
         // Where it ended up, for the log: nothing else survives this path.
         AppLogger.w(
           'Deckbox login ended ${result.state.name} at '
@@ -63,20 +69,17 @@ class _DeckboxLoginDialogState extends State<DeckboxLoginDialog> {
         );
         setState(() {
           _busy = false;
-          _error = result.state == DeckboxSessionState.signedOut
-              ? "Deckbox didn't accept that login."
-              : "Logged in, but the page didn't look signed in. Nothing saved.";
+          _error = switch (result.state) {
+            DeckboxSessionState.signedOut => "Deckbox didn't accept that login.",
+            DeckboxSessionState.signedIn =>
+              "Signed in, but Deckbox didn't show the username. Nothing saved.",
+            DeckboxSessionState.unknown =>
+              "Logged in, but the page didn't look signed in. Nothing saved.",
+          };
         });
         return;
       }
-
-      await SessionStore.save(DeckboxSession(
-        username: result.username ?? '',
-        cookies: client.cookies,
-        savedAt: DateTime.now(),
-      ));
-      AppLogger.i('Deckbox signed in as ${result.username ?? '(name not found)'}');
-      if (mounted) Navigator.pop(context, result);
+      Navigator.pop(context, (result: result, account: account));
     } on DeckboxException catch (e) {
       AppLogger.w('$e');
       if (mounted) setState(() { _busy = false; _error = '$e'; });
@@ -86,8 +89,6 @@ class _DeckboxLoginDialogState extends State<DeckboxLoginDialog> {
       if (mounted) {
         setState(() { _busy = false; _error = "Couldn't reach Deckbox."; });
       }
-    } finally {
-      client.close();
     }
   }
 
@@ -100,6 +101,9 @@ class _DeckboxLoginDialogState extends State<DeckboxLoginDialog> {
       child: AlertDialog(
         title: const Text('Add Deckbox account'),
         content: SingleChildScrollView(
+          // Room for the Email field's floated label, which rides above the
+          // field's top edge — the scroll view clips at its bounds (M2 bug #2).
+          padding: const EdgeInsets.only(top: 8),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,

@@ -15,12 +15,19 @@ class DeckboxSession {
     required this.savedAt,
   });
 
-  /// As read from Deckbox's own page — empty if the page did not name the user,
-  /// which the spike screen's account guard treats as "not the test account".
+  /// As read from Deckbox's own page (the Friends link, D1).
   final String username;
 
   final Map<String, String> cookies;
+
+  /// When the session was signed in — not when it was last refreshed.
   final DateTime savedAt;
+
+  /// The same session with the cookies a later request came back with.
+  /// Deckbox reissues its session cookie on every response with a new
+  /// six-month expiry (D1); saving it back is what keeps a used session alive.
+  DeckboxSession withCookies(Map<String, String> fresh) =>
+      DeckboxSession(username: username, cookies: fresh, savedAt: savedAt);
 
   Map<String, Object> toJson() => {
         'username': username,
@@ -35,13 +42,12 @@ class DeckboxSession {
       );
 }
 
-/// The Deckbox session in secure storage — encrypted with a key the Android
-/// Keystore holds, so the file reads as ciphertext even where `run-as` can
-/// reach it.
+/// Deckbox sessions in secure storage, **one per account** — encrypted with a
+/// key the Android Keystore holds, so the file reads as ciphertext even where
+/// `run-as` can reach it.
 ///
-/// **One session, one key, for now.** M2 keys it by account id once the
-/// `ExternalAccounts` table exists; until the spikes have settled the model,
-/// there is nothing to key it by.
+/// Keyed by the `ExternalAccounts` row id. The database knows an account
+/// exists; only this knows how to sign in as it, and only on this phone.
 ///
 /// The storage files are excluded from Android Auto Backup in
 /// `res/xml/backup_rules.xml` and `data_extraction_rules.xml`: a restored copy
@@ -50,11 +56,11 @@ class SessionStore {
   SessionStore._();
 
   static const _storage = FlutterSecureStorage();
-  static const _key = 'deckbox_session';
+  static String _key(int accountId) => 'deckbox_session_$accountId';
 
-  static Future<DeckboxSession?> load() async {
+  static Future<DeckboxSession?> load(int accountId) async {
     try {
-      final raw = await _storage.read(key: _key);
+      final raw = await _storage.read(key: _key(accountId));
       if (raw == null) return null;
       return DeckboxSession.fromJson(jsonDecode(raw) as Map<String, dynamic>);
     } catch (e) {
@@ -65,8 +71,8 @@ class SessionStore {
     }
   }
 
-  static Future<void> save(DeckboxSession session) =>
-      _storage.write(key: _key, value: jsonEncode(session.toJson()));
+  static Future<void> save(int accountId, DeckboxSession session) =>
+      _storage.write(key: _key(accountId), value: jsonEncode(session.toJson()));
 
-  static Future<void> clear() => _storage.delete(key: _key);
+  static Future<void> clear(int accountId) => _storage.delete(key: _key(accountId));
 }

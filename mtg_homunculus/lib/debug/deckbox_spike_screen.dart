@@ -5,18 +5,23 @@ import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../core/logging/app_logger.dart';
+import '../features/card_lookup/data/collection_database.dart';
 import '../features/card_lookup/external/deckbox/deckbox_client.dart';
 import '../features/card_lookup/external/deckbox/deckbox_csv.dart';
+import '../features/card_lookup/external/deckbox_sync.dart';
 import '../features/card_lookup/external/session_store.dart';
 import '../features/card_lookup/models/dev_flags.dart';
 import '../features/card_lookup/widgets/deckbox_login_dialog.dart';
 
 /// The Deckbox spikes (M1), one button per step, run on the real device.
 ///
-/// **Every step but logging in is guarded.** It runs only when the stored
-/// session's username — as Deckbox's own page reports it — equals
-/// [DevFlags.deckboxTestUser]. Logging in is always allowed, because it is the
-/// user's own action; acting on whatever account they logged into is not.
+/// **Every step but logging in is guarded.** It acts only on the stored
+/// account whose username — as Deckbox's own page reported it — equals
+/// [DevFlags.deckboxTestUser], with that account's session. Logging in is
+/// always allowed, because it is the user's own action; acting on whatever
+/// account they logged into is not. Since M2 the spike signs in through the
+/// app's own account flow, so the test account also appears in the lists
+/// folder.
 ///
 /// Each step writes a record to `<app documents>/deckbox_spike/`, pulled over
 /// ADB like `app_log.txt`. Records are redacted: no cookie values, no
@@ -31,6 +36,7 @@ class DeckboxSpikeScreen extends StatefulWidget {
 class _DeckboxSpikeScreenState extends State<DeckboxSpikeScreen> {
   late final _testUser =
       TextEditingController(text: DevFlags.deckboxTestUser.value);
+  ExternalAccount? _account;
   DeckboxSession? _session;
   bool _busy = false;
   String _output = '';
@@ -48,11 +54,16 @@ class _DeckboxSpikeScreenState extends State<DeckboxSpikeScreen> {
     super.dispose();
   }
 
+  /// The test account, if it is stored, and its session.
   Future<void> _reload() async {
     final dir = await getApplicationDocumentsDirectory();
-    final session = await SessionStore.load();
+    final expected = DevFlags.deckboxTestUser.value;
+    final accounts = await CollectionDatabase.instance.externalDao.watchAccounts().first;
+    final account = accounts.where((a) => a.username == expected).firstOrNull;
+    final session = account == null ? null : await SessionStore.load(account.id);
     if (!mounted) return;
     setState(() {
+      _account = account;
       _session = session;
       _outDir = '${dir.path}/deckbox_spike';
     });
@@ -67,7 +78,8 @@ class _DeckboxSpikeScreenState extends State<DeckboxSpikeScreen> {
   String get _guardText {
     final s = _session;
     if (DevFlags.deckboxTestUser.value.isEmpty) return 'Set the test username first';
-    if (s == null) return 'No stored session';
+    if (_account == null) return 'No stored account with that username — log in';
+    if (s == null) return 'The test account is signed out — log in';
     if (s.username.isEmpty) return "Session's username unknown — guarded steps disabled";
     return _guardOk
         ? 'Stored session is the test account'
@@ -79,14 +91,15 @@ class _DeckboxSpikeScreenState extends State<DeckboxSpikeScreen> {
   // ---------------------------------------------------------------------------
 
   Future<void> _login() async {
-    final result = await DeckboxLoginDialog.show(context);
-    if (result == null) return;
+    final login = await DeckboxLoginDialog.show(context);
+    if (login == null) return;
     await _reload();
+    final session = await SessionStore.load(login.account.id);
     await _record(
       'd1_login',
-      _sessionSummary(result),
-      result.page,
-      _session?.cookies ?? const {},
+      _sessionSummary(login.result),
+      login.result.page,
+      session?.cookies ?? const {},
     );
   }
 
@@ -102,10 +115,13 @@ class _DeckboxSpikeScreenState extends State<DeckboxSpikeScreen> {
         );
       });
 
+  /// The app's own *Log out* on the test account.
   Future<void> _forget() async {
-    await SessionStore.clear();
+    final account = _account;
+    if (account == null) return;
+    await DeckboxSync.instance.logOut(account);
     await _reload();
-    setState(() => _output = 'Stored session deleted.');
+    setState(() => _output = 'Test account logged out; its session deleted.');
   }
 
   // ---------------------------------------------------------------------------
@@ -767,18 +783,15 @@ class _DeckboxSpikeScreenState extends State<DeckboxSpikeScreen> {
     Future<(String, DeckboxPage)> Function(DeckboxClient client) body,
   ) async {
     final session = _session;
-    if (session == null || !_guardOk) return;
+    final account = _account;
+    if (session == null || account == null || !_guardOk) return;
 
     setState(() => _busy = true);
     final client = DeckboxClient(cookies: session.cookies, onLog: AppLogger.d);
     try {
       final (summary, page) = await body(client);
-      final refreshed = DeckboxSession(
-        username: session.username,
-        cookies: client.cookies,
-        savedAt: session.savedAt,
-      );
-      await SessionStore.save(refreshed);
+      final refreshed = session.withCookies(client.cookies);
+      await SessionStore.save(account.id, refreshed);
       _session = refreshed;
       await _record(step, summary, page, client.cookies);
     } on DeckboxException catch (e) {
@@ -862,7 +875,7 @@ class _DeckboxSpikeScreenState extends State<DeckboxSpikeScreen> {
               ),
               onSubmitted: (v) async {
                 await DevFlags.setDeckboxTestUser(v);
-                setState(() {});
+                await _reload();
               },
             ),
             const SizedBox(height: 8),

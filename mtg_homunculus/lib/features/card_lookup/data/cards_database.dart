@@ -215,6 +215,19 @@ class CardsDatabase extends _$CardsDatabase {
   Future<Card?> cardById(String id) =>
       (select(cards)..where((c) => c.id.equals(id))).getSingleOrNull();
 
+  /// A printing by set and collector number.
+  ///
+  /// How a Deckbox **etched** row finds its card: Deckbox files etched copies
+  /// under an edition of their own (`mh2_e`) and exports them with no Scryfall
+  /// id, but with the base set's collector number — `mh2_e` #389 is `mh2` 389.
+  Future<Card?> cardBySetNumber(String setCode, String collectorNumber) =>
+      (select(cards)
+            ..where((c) =>
+                c.setCode.equals(setCode.toLowerCase()) &
+                c.collectorNumber.equals(collectorNumber))
+            ..limit(1))
+          .getSingleOrNull();
+
   /// Cards that still need a hash computed on device.
   ///
   /// The `image_status` filter is **not optional**: 738 of 107,323 printings have

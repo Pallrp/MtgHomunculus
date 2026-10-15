@@ -58,6 +58,16 @@ class PickerTokens extends ThemeExtension<PickerTokens> {
   /// Behind the camera feed.
   final Color viewfinder;
 
+  /// **Staged, and "any printing"** — from the Deckbox Integration UI canvas.
+  /// Everything waiting to go to Deckbox, the push action, the scan target and
+  /// the *Any printing* label use it, and nothing else does. Blue, so it never
+  /// reads as the accent's "interactive" or the warning's "look at this".
+  final Color sync;
+  final Color syncSoft;
+
+  /// [sync] darkened for small text, so it clears 4.5:1 on [surface].
+  final Color syncInk;
+
   const PickerTokens({
     required this.ground,
     required this.surface,
@@ -80,6 +90,9 @@ class PickerTokens extends ThemeExtension<PickerTokens> {
     required this.condDm,
     required this.condDmBg,
     required this.viewfinder,
+    required this.sync,
+    required this.syncSoft,
+    required this.syncInk,
   });
 
   /// Background and foreground for one condition, or null for Near Mint, which
@@ -114,6 +127,9 @@ class PickerTokens extends ThemeExtension<PickerTokens> {
     condDm: Color(0xFFC4432F),
     condDmBg: Color(0xFFF8D5CE),
     viewfinder: Color(0xFF14201C),
+    sync: Color(0xFF2F6DB0),
+    syncSoft: Color(0xFFE2ECF8),
+    syncInk: Color(0xFF22538A),
   );
 
   static const dark = PickerTokens(
@@ -138,6 +154,9 @@ class PickerTokens extends ThemeExtension<PickerTokens> {
     condDm: Color(0xFFE86A56),
     condDmBg: Color(0xFF351A14),
     viewfinder: Color(0xFF0A100E),
+    sync: Color(0xFF7DB3F0),
+    syncSoft: Color(0xFF15253A),
+    syncInk: Color(0xFFA3C9F5),
   );
 
   /// Foil, and only foil.
@@ -238,6 +257,9 @@ class PickerTokens extends ThemeExtension<PickerTokens> {
     Color? condDm,
     Color? condDmBg,
     Color? viewfinder,
+    Color? sync,
+    Color? syncSoft,
+    Color? syncInk,
   }) =>
       PickerTokens(
         ground: ground ?? this.ground,
@@ -261,6 +283,9 @@ class PickerTokens extends ThemeExtension<PickerTokens> {
         condDm: condDm ?? this.condDm,
         condDmBg: condDmBg ?? this.condDmBg,
         viewfinder: viewfinder ?? this.viewfinder,
+        sync: sync ?? this.sync,
+        syncSoft: syncSoft ?? this.syncSoft,
+        syncInk: syncInk ?? this.syncInk,
       );
 
   @override
@@ -288,6 +313,9 @@ class PickerTokens extends ThemeExtension<PickerTokens> {
       condDm: Color.lerp(condDm, other.condDm, t)!,
       condDmBg: Color.lerp(condDmBg, other.condDmBg, t)!,
       viewfinder: Color.lerp(viewfinder, other.viewfinder, t)!,
+      sync: Color.lerp(sync, other.sync, t)!,
+      syncSoft: Color.lerp(syncSoft, other.syncSoft, t)!,
+      syncInk: Color.lerp(syncInk, other.syncInk, t)!,
     );
   }
 }

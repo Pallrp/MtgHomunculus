@@ -6,12 +6,16 @@ import 'package:permission_handler/permission_handler.dart';
 import '../data/cards_database.dart';
 import '../data/collection_database.dart';
 import '../data/hash_index.dart';
+import '../external/external_dao.dart';
 import '../models/dev_flags.dart';
 import '../models/scan_defaults.dart';
 import '../services/card_data_updater.dart';
 import '../theme/picker_tokens.dart';
+import '../widgets/deckbox_login_dialog.dart';
+import '../widgets/deckbox_section.dart';
 import 'card_data_screen.dart';
 import 'card_data_setup_screen.dart';
+import 'deckbox_list_screen.dart';
 import 'listing_detail_screen.dart';
 
 // ---------------------------------------------------------------------------
@@ -44,6 +48,13 @@ class _ListingHomeScreenState extends State<ListingHomeScreen> {
 
   CollectionDatabase get _db => CollectionDatabase.instance;
 
+  // Deckbox — watched rather than loaded, so a login, a pull or a log out made
+  // anywhere shows here without a reload.
+  final _subs = <StreamSubscription<Object?>>[];
+  List<ExternalAccount> _accounts = const [];
+  List<ExternalList> _externalLists = const [];
+  Map<int, ExternalCounts> _externalCounts = const {};
+
   // ---------------------------------------------------------------------------
   // Init
   // ---------------------------------------------------------------------------
@@ -53,6 +64,20 @@ class _ListingHomeScreenState extends State<ListingHomeScreen> {
     super.initState();
     _requestCamera();
     _load();
+    final dao = _db.externalDao;
+    _subs.addAll([
+      dao.watchAccounts().listen((a) => setState(() => _accounts = a)),
+      dao.watchLists().listen((l) => setState(() => _externalLists = l)),
+      dao.watchCounts().listen((c) => setState(() => _externalCounts = c)),
+    ]);
+  }
+
+  @override
+  void dispose() {
+    for (final s in _subs) {
+      s.cancel();
+    }
+    super.dispose();
   }
 
   Future<void> _loadCardData() async {
@@ -153,6 +178,73 @@ class _ListingHomeScreenState extends State<ListingHomeScreen> {
     _load();
   }
 
+  Future<void> _openDeckboxList(ExternalList list) => Navigator.push<void>(
+        context,
+        MaterialPageRoute(builder: (_) => DeckboxListScreen(listId: list.id)),
+      );
+
+  /// The + menu, opened **above** the FAB, as the canvas's *Plus menu* draws it.
+  ///
+  /// A popup menu rather than a `MenuAnchor` (M2 bug #1): the anchor opened
+  /// downward and, the app being edge-to-edge, took the area behind the
+  /// navigation bar for free space — its second item landed there, untappable.
+  /// A popup menu keeps itself inside the screen's safe area whatever position
+  /// it is asked for, so even a wrong height estimate cannot hide an item.
+  Future<void> _openAddMenu(BuildContext fabContext) async {
+    final fab = fabContext.findRenderObject()! as RenderBox;
+    final overlay = Overlay.of(fabContext).context.findRenderObject()! as RenderBox;
+    final rect = fab.localToGlobal(Offset.zero, ancestor: overlay) & fab.size;
+    // Two items and the menu's own vertical padding: its bottom edge 8 dp above
+    // the FAB.
+    const menuHeight = 2 * kMinInteractiveDimension + 16;
+
+    final choice = await showMenu<String>(
+      context: fabContext,
+      position: RelativeRect.fromLTRB(
+        rect.left - 160,
+        rect.top - menuHeight - 8,
+        overlay.size.width - rect.right,
+        overlay.size.height - rect.top + 8,
+      ),
+      items: const [
+        PopupMenuItem(
+          value: 'list',
+          child: ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.list_rounded),
+            title: Text('New list'),
+          ),
+        ),
+        PopupMenuItem(
+          value: 'deckbox',
+          child: ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.inventory_2_outlined),
+            title: Text('Add Deckbox account'),
+          ),
+        ),
+      ],
+    );
+    if (!mounted) return;
+    switch (choice) {
+      case 'list':
+        await _showCreateDialog();
+      case 'deckbox':
+        await _addDeckboxAccount();
+    }
+  }
+
+  /// + → *Add Deckbox account*. The account and its lists appear through the
+  /// watched streams; nothing to reload.
+  Future<void> _addDeckboxAccount() async {
+    final login = await DeckboxLoginDialog.show(context);
+    if (login == null || !mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text('Signed in as ${login.account.username}'),
+      duration: const Duration(seconds: 2),
+    ));
+  }
+
   /// Show the "New listing" dialog.  On confirm, create the listing and open it.
   Future<void> _showCreateDialog() async {
     final name = await showDialog<String>(
@@ -203,10 +295,13 @@ class _ListingHomeScreenState extends State<ListingHomeScreen> {
       // otherwise the FAB lands on top of it and eats the chevron.
       floatingActionButtonLocation:
           const _EndFloatAbove(_CardDataRow.height),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _showCreateDialog,
-        tooltip:   'New listing',
-        child:     const Icon(Icons.add),
+      // + opens a two-item menu: a new app list, or a Deckbox account.
+      floatingActionButton: Builder(
+        builder: (fabContext) => FloatingActionButton(
+          onPressed: () => _openAddMenu(fabContext),
+          tooltip: 'Add',
+          child: const Icon(Icons.add),
+        ),
       ),
       body: _buildBody(),
     );
@@ -279,10 +374,21 @@ class _ListingHomeScreenState extends State<ListingHomeScreen> {
   }
 
   Widget _buildList() {
+    final hasDeckbox = _accounts.isNotEmpty;
     return ListView.separated(
-      itemCount:        _listings.length,
+      // The Deckbox section rides as one extra item after the app lists, so
+      // the whole folder scrolls as one.
+      itemCount:        _listings.length + (hasDeckbox ? 1 : 0),
       separatorBuilder: (_, _) => const Divider(height: 1),
       itemBuilder: (_, index) {
+        if (index == _listings.length) {
+          return DeckboxSection(
+            accounts: _accounts,
+            lists: _externalLists,
+            counts: _externalCounts,
+            onOpenList: _openDeckboxList,
+          );
+        }
         final entry = _listings[index];
         // The default list has no delete action at all — swiping it would only
         // be refused, and offering a gesture that never works is worse than

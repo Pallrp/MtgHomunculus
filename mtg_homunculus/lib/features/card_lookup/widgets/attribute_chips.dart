@@ -24,10 +24,14 @@ import '../theme/picker_tokens.dart';
 ///
 /// The split also keeps the logic honest: two attributes consult the defaults,
 /// the third is a fixed table. One lookup, no per-list state.
+///
+/// **A null attribute is skipped, not defaulted.** App entries always set all
+/// three. A Deckbox *any printing* row may leave some unset — "any finish",
+/// "any language" — and a chip there would claim something the row does not.
 class AttributeChips extends StatelessWidget {
-  final int finish;
-  final String language;
-  final int condition;
+  final int? finish;
+  final String? language;
+  final int? condition;
 
   /// Defaults to compare against. Injected rather than read statically so a test
   /// can state the norm it is testing.
@@ -42,62 +46,68 @@ class AttributeChips extends StatelessWidget {
   });
 
   AttributeChips.of(Entry entry, {super.key, ScanDefaults? defaults})
-      : finish = entry.finish,
-        language = entry.language,
-        condition = entry.condition,
-        defaults = defaults ?? ScanDefaults.current;
+    : finish = entry.finish,
+      language = entry.language,
+      condition = entry.condition,
+      defaults = defaults ?? ScanDefaults.current;
 
   /// The artifact labels nonfoil `NORMAL`, which is also what a shop would.
   static String finishLabel(int f) => switch (f) {
-        Finish.foil => 'FOIL',
-        Finish.etched => 'ETCHED',
-        _ => 'NORMAL',
-      };
+    Finish.foil => 'FOIL',
+    Finish.etched => 'ETCHED',
+    _ => 'NORMAL',
+  };
 
   @override
   Widget build(BuildContext context) {
     final t = PickerTokens.of(context);
-    final cond = t.condition(condition);
+    final finish = this.finish;
+    final language = this.language;
+    final condition = this.condition;
+    final cond = condition == null ? null : t.condition(condition);
 
     return Wrap(
       spacing: 3,
       runSpacing: 3,
       children: [
-        _Chip(
-          label: finishLabel(finish),
-          // Foil is the one gradient in the list, and it is shown whether or not
-          // it is your default: a foil is a foil.
-          gradient: finish == Finish.foil ? PickerTokens.foil : null,
-          fg: finish == Finish.foil
-              ? PickerTokens.onFoil
-              : finish == defaults.finish
-                  ? t.textFaint
-                  : t.accent,
-          bg: finish == Finish.foil
-              ? null
-              : finish == defaults.finish
-                  ? t.surface2
-                  : t.accentSoft,
-          border: finish == Finish.foil
-              ? Colors.black.withValues(alpha: 0.2)
-              : finish == defaults.finish
-                  ? t.line
-                  : t.accent,
-        ),
-        _Chip(
-          label: language.toUpperCase(),
-          fg: language == defaults.language ? t.textFaint : t.accent,
-          bg: language == defaults.language ? t.surface2 : t.accentSoft,
-          border: language == defaults.language ? t.line : t.accent,
-        ),
-        _Chip(
-          label: Condition.label(condition),
-          // Near Mint is passive and takes the ordinary muted chip. Note this
-          // never consults the defaults — see the class doc.
-          fg: cond?.$1 ?? t.textFaint,
-          bg: cond?.$2 ?? t.surface2,
-          border: cond?.$1 ?? t.line,
-        ),
+        if (finish != null)
+          _Chip(
+            label: finishLabel(finish),
+            // Foil is the one gradient in the list, and it is shown whether or not
+            // it is your default: a foil is a foil.
+            gradient: finish == Finish.foil ? PickerTokens.foil : null,
+            fg: finish == Finish.foil
+                ? PickerTokens.onFoil
+                : finish == defaults.finish
+                ? t.textFaint
+                : t.accent,
+            bg: finish == Finish.foil
+                ? null
+                : finish == defaults.finish
+                ? t.surface2
+                : t.accentSoft,
+            border: finish == Finish.foil
+                ? Colors.black.withValues(alpha: 0.2)
+                : finish == defaults.finish
+                ? t.line
+                : t.accent,
+          ),
+        if (language != null)
+          _Chip(
+            label: language.toUpperCase(),
+            fg: language == defaults.language ? t.textFaint : t.accent,
+            bg: language == defaults.language ? t.surface2 : t.accentSoft,
+            border: language == defaults.language ? t.line : t.accent,
+          ),
+        if (condition != null)
+          _Chip(
+            label: Condition.label(condition),
+            // Near Mint is passive and takes the ordinary muted chip. Note this
+            // never consults the defaults — see the class doc.
+            fg: cond?.$1 ?? t.textFaint,
+            bg: cond?.$2 ?? t.surface2,
+            border: cond?.$1 ?? t.line,
+          ),
       ],
     );
   }
@@ -122,16 +132,13 @@ class _Chip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0.5),
-        decoration: BoxDecoration(
-          color: gradient == null ? bg : null,
-          gradient: gradient,
-          border: Border.all(color: border),
-          borderRadius: BorderRadius.circular(3),
-        ),
-        child: Text(
-          label,
-          style: PickerTokens.mono(context, size: 8.5, color: fg),
-        ),
-      );
+    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0.5),
+    decoration: BoxDecoration(
+      color: gradient == null ? bg : null,
+      gradient: gradient,
+      border: Border.all(color: border),
+      borderRadius: BorderRadius.circular(3),
+    ),
+    child: Text(label, style: PickerTokens.mono(context, size: 8.5, color: fg)),
+  );
 }
