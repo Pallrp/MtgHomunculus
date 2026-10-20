@@ -245,8 +245,7 @@ class DeckboxClient {
   /// on a detailed set (Inventory, Tradelist, Wishlist).
   ///
   /// **Refuses an empty selection.** To Deckbox, this request with no `cards`
-  /// means *every row in the set* — the form the spike's test-account reset
-  /// uses on purpose. Here, an empty list is always a bug.
+  /// means *every row in the set*. Here, an empty list is always a bug.
   Future<DeckboxPage> removeRows(DeckboxListRef list, List<String> rowIds) {
     if (rowIds.isEmpty) {
       throw const DeckboxException(
@@ -492,14 +491,6 @@ class DeckboxClient {
       .replaceAll('&lt;', '<')
       .replaceAll('&gt;', '>');
 
-  /// The export dialog's HTML, which is where the extra columns are offered.
-  /// A POST because that is how the site loads it; it changes nothing.
-  Future<DeckboxPage> exportDialog(int setId) => post(
-        '/sets/export_dialog',
-        {'id': '$setId', 'f': '', 's': '', 'o': ''},
-        referer: '/sets/$setId',
-      );
-
   // ---------------------------------------------------------------------------
   // Requests
   // ---------------------------------------------------------------------------
@@ -702,28 +693,6 @@ class DeckboxClient {
     if (start < 0) return null;
     final end = html.indexOf('</ul>', start);
     return html.substring(start, end < 0 ? html.length : end);
-  }
-
-  /// Masks what must never be written down: the anti-forgery token, wherever
-  /// the page carries it, and the value of every cookie this client holds.
-  ///
-  /// For saving pages to disk during the spikes. The token appears twice on a
-  /// Deckbox page — the form field and a `Tcg.setCsrf("…")` call that the
-  /// site's scripts read it back from.
-  String redact(String text) {
-    var out = text
-        .replaceAllMapped(
-          RegExp(r'''(authenticity_token['"]\s+value\s*=\s*['"])[^'"]+'''),
-          (m) => '${m[1]}[redacted]',
-        )
-        .replaceAllMapped(
-          RegExp(r'''(setCsrf\(\s*["'])[^"']+'''),
-          (m) => '${m[1]}[redacted]',
-        );
-    for (final value in _cookies.values) {
-      if (value.length >= 8) out = out.replaceAll(value, '[redacted]');
-    }
-    return out;
   }
 }
 

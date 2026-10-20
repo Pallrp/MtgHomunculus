@@ -6,8 +6,7 @@ import '../external/deckbox/deckbox_client.dart';
 import '../external/deckbox_sync.dart';
 
 /// What a successful login hands back: the account it saved, and the login's
-/// own result for a caller that wants the details (the spike screen records
-/// the redirect chain).
+/// own result for a caller that wants the details.
 typedef DeckboxLogin = ({DeckboxLoginResult result, ExternalAccount account});
 
 /// "Add Deckbox account" — the login bubble, shaped like *New listing*.
