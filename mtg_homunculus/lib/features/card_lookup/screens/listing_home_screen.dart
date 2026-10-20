@@ -7,12 +7,14 @@ import '../data/cards_database.dart';
 import '../data/collection_database.dart';
 import '../data/hash_index.dart';
 import '../external/external_dao.dart';
+import '../models/deckbox_prefs.dart';
 import '../models/dev_flags.dart';
 import '../models/scan_defaults.dart';
 import '../services/card_data_updater.dart';
 import '../theme/picker_tokens.dart';
 import '../widgets/deckbox_login_dialog.dart';
 import '../widgets/deckbox_section.dart';
+import '../widgets/new_list_dialog.dart';
 import 'card_data_screen.dart';
 import 'card_data_setup_screen.dart';
 import 'deckbox_list_screen.dart';
@@ -54,6 +56,7 @@ class _ListingHomeScreenState extends State<ListingHomeScreen> {
   List<ExternalAccount> _accounts = const [];
   List<ExternalList> _externalLists = const [];
   Map<int, ExternalCounts> _externalCounts = const {};
+  Map<int, int> _stagedCounts = const {};
 
   // ---------------------------------------------------------------------------
   // Init
@@ -66,9 +69,18 @@ class _ListingHomeScreenState extends State<ListingHomeScreen> {
     _load();
     final dao = _db.externalDao;
     _subs.addAll([
+      // App lists are watched too, not only loaded (M3 step 4): a list made
+      // by *New list…* in Cut / Copy, or filled from another screen, appears
+      // however the user comes back here.
+      _db.watchLists().listen((l) => setState(() {
+            _listings = l;
+            _loading = false;
+          })),
+      _db.watchCountsForAll().listen((c) => setState(() => _counts = c)),
       dao.watchAccounts().listen((a) => setState(() => _accounts = a)),
       dao.watchLists().listen((l) => setState(() => _externalLists = l)),
       dao.watchCounts().listen((c) => setState(() => _externalCounts = c)),
+      dao.watchStagedCounts().listen((c) => setState(() => _stagedCounts = c)),
     ]);
   }
 
@@ -141,6 +153,7 @@ class _ListingHomeScreenState extends State<ListingHomeScreen> {
     // every surface below it renders chips against these.
     await ScanDefaults.loadCurrent();
     await DevFlags.load();
+    await DeckboxPrefs.load();
 
     // Card data row: both figures are cheap, and the row is meant to be legible
     // without a tap — the count and the age are what you want at the moment a
@@ -249,7 +262,7 @@ class _ListingHomeScreenState extends State<ListingHomeScreen> {
   Future<void> _showCreateDialog() async {
     final name = await showDialog<String>(
       context: context,
-      builder: (_) => const _CreateListingDialog(),
+      builder: (_) => const NewListDialog(),
     );
     if (name == null || name.isEmpty || !mounted) return;
     final list = await _db.createList(name);
@@ -260,6 +273,29 @@ class _ListingHomeScreenState extends State<ListingHomeScreen> {
   ///
   /// The default list refuses to delete, so it is put straight back rather than
   /// vanishing from the screen while surviving in the database.
+  /// A list holding cards asks first (2026-10-18) — a swipe is easy to make
+  /// by accident, and it takes every card with it. An empty list goes at once.
+  Future<bool> _confirmDelete(CardList list) async {
+    final copies = _counts[list.id]?.copies ?? 0;
+    if (copies == 0) return true;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Delete ${list.name}?'),
+        content: Text('Its $copies ${copies == 1 ? 'card goes' : 'cards go'} with it.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: Theme.of(ctx).colorScheme.error),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    return ok ?? false;
+  }
+
   Future<void> _deleteListing(CardList list) async {
     setState(() => _listings.removeWhere((e) => e.id == list.id));
     final gone = await _db.deleteList(list.id);
@@ -386,6 +422,7 @@ class _ListingHomeScreenState extends State<ListingHomeScreen> {
             accounts: _accounts,
             lists: _externalLists,
             counts: _externalCounts,
+            staged: _stagedCounts,
             onOpenList: _openDeckboxList,
           );
         }
@@ -412,6 +449,7 @@ class _ListingHomeScreenState extends State<ListingHomeScreen> {
               color: Colors.white,
             ),
           ),
+          confirmDismiss: (_) => _confirmDelete(entry),
           onDismissed: (_) => _deleteListing(entry),
           child: _ListingRow(
             entry: entry,
@@ -466,66 +504,6 @@ class _ListingRow extends StatelessWidget {
             ?.copyWith(color: cs.onSurfaceVariant),
       ),
       trailing: const Icon(Icons.chevron_right_rounded),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Create listing dialog
-// ---------------------------------------------------------------------------
-
-class _CreateListingDialog extends StatefulWidget {
-  const _CreateListingDialog();
-
-  @override
-  State<_CreateListingDialog> createState() => _CreateListingDialogState();
-}
-
-class _CreateListingDialogState extends State<_CreateListingDialog> {
-  final _controller = TextEditingController();
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  void _submit() {
-    final name = _controller.text.trim();
-    if (name.isEmpty) return;
-    Navigator.pop(context, name);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final hasText = _controller.text.trim().isNotEmpty;
-
-    return AlertDialog(
-      title: const Text('New listing'),
-      content: TextField(
-        controller:           _controller,
-        autofocus:            true,
-        textCapitalization:   TextCapitalization.sentences,
-        textInputAction:      TextInputAction.done,
-        onSubmitted:          (_) => _submit(),
-        onChanged:            (_) => setState(() {}),
-        decoration: const InputDecoration(
-          hintText:       'Listing name',
-          border:         OutlineInputBorder(),
-          isDense:        true,
-          contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child:     const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: hasText ? _submit : null,
-          child:     const Text('Create'),
-        ),
-      ],
     );
   }
 }

@@ -241,7 +241,14 @@ class Entries extends Table {
 /// Also home to the **mirrors of Deckbox lists** (`external_tables.dart`), with
 /// their queries in [ExternalDao] — one precious file, two vocabularies.
 @DriftDatabase(
-  tables: [Lists, Entries, ExternalAccounts, ExternalLists, ExternalEntries],
+  tables: [
+    Lists,
+    Entries,
+    ExternalAccounts,
+    ExternalLists,
+    ExternalEntries,
+    StagedChanges,
+  ],
   daos: [ExternalDao],
 )
 class CollectionDatabase extends _$CollectionDatabase {
@@ -259,19 +266,34 @@ class CollectionDatabase extends _$CollectionDatabase {
   static CollectionDatabase get instance => _instance ??= CollectionDatabase();
 
   /// 1 — app lists. 2 — the Deckbox mirror tables (M2, 2026-10-15).
+  /// 3 — staged changes (M3). 4 — one mirror for an Inventory and its
+  /// Tradelist; `forTrade` on staged changes (tradelist.md, 2026-10-20).
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 4;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
         onCreate: (m) => m.createAll(),
-        // **Only ever adds.** 1 → 2 creates three new tables and touches
-        // nothing that holds the user's lists.
+        // **Only ever adds.** Each step creates new tables and touches nothing
+        // that holds the user's lists.
         onUpgrade: (m, from, to) async {
           if (from < 2) {
             await m.createTable(externalAccounts);
             await m.createTable(externalLists);
             await m.createTable(externalEntries);
+          }
+          if (from < 3) {
+            await m.createTable(stagedChanges);
+          }
+          if (from < 4) {
+            // A schema-3 table was created without it.
+            if (from >= 3) await m.addColumn(stagedChanges, stagedChanges.forTrade);
+            // The Tradelist reads its Inventory's rows now. Its own copy is only
+            // a mirror of Deckbox — dropped, and rebuilt by the next pull.
+            await customStatement(
+              "DELETE FROM external_entries WHERE list_id IN "
+              "(SELECT id FROM external_lists WHERE kind = 'tradelist')",
+            );
           }
         },
         beforeOpen: (details) async {
@@ -569,18 +591,23 @@ class CollectionDatabase extends _$CollectionDatabase {
   }
 
   /// Copies per list, for the lists folder. One query, not one per list.
-  Future<Map<int, ({int copies, int unique})>> countsForAll() async {
-    final q = selectOnly(entries)
-      ..addColumns([entries.listId, entries.quantity.sum(), entries.id.count()])
-      ..groupBy([entries.listId]);
-    return {
-      for (final row in await q.get())
-        row.read(entries.listId)!: (
-          copies: row.read(entries.quantity.sum()) ?? 0,
-          unique: row.read(entries.id.count()) ?? 0,
-        ),
-    };
-  }
+  Future<Map<int, ({int copies, int unique})>> countsForAll() async => _counts(await _countsQuery().get());
+
+  /// As [countsForAll], kept current — the lists folder watches it, so a list
+  /// changed anywhere shows its new count without a reload.
+  Stream<Map<int, ({int copies, int unique})>> watchCountsForAll() => _countsQuery().watch().map(_counts);
+
+  JoinedSelectStatement<$EntriesTable, Entry> _countsQuery() => selectOnly(entries)
+    ..addColumns([entries.listId, entries.quantity.sum(), entries.id.count()])
+    ..groupBy([entries.listId]);
+
+  Map<int, ({int copies, int unique})> _counts(List<TypedResult> rows) => {
+        for (final row in rows)
+          row.read(entries.listId)!: (
+            copies: row.read(entries.quantity.sum()) ?? 0,
+            unique: row.read(entries.id.count()) ?? 0,
+          ),
+      };
 
   /// Which printings of [cardId] are already in [listId], for the picker's badge.
   Future<List<Entry>> entriesForCard(int listId, String cardId) =>

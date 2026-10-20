@@ -2730,9 +2730,10 @@ class ExternalEntry extends DataClass implements Insertable<ExternalEntry> {
   final String? cardRef;
   final bool anyPrinting;
 
-  /// The app's finish, language and condition, where they map. Null where they
-  /// do not — *Mint* and *Proxy* have no app condition (D7) — and the raw
-  /// fields above are what count.
+  /// The app's finish, language and condition, where they map — for display.
+  /// *Mint* shows as NM; *Proxy* has no app condition and stays null (D7); a
+  /// generic row may leave any of them unset. The raw fields above are what
+  /// identify the row.
   final int? finish;
   final String? languageCode;
   final int? conditionCode;
@@ -3385,6 +3386,1245 @@ class ExternalEntriesCompanion extends UpdateCompanion<ExternalEntry> {
   }
 }
 
+class $StagedChangesTable extends StagedChanges
+    with TableInfo<$StagedChangesTable, StagedChange> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $StagedChangesTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+    'id',
+    aliasedName,
+    false,
+    hasAutoIncrement: true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'PRIMARY KEY AUTOINCREMENT',
+    ),
+  );
+  static const VerificationMeta _listIdMeta = const VerificationMeta('listId');
+  @override
+  late final GeneratedColumn<int> listId = GeneratedColumn<int>(
+    'list_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES external_lists (id) ON DELETE CASCADE',
+    ),
+  );
+  static const VerificationMeta _directionMeta = const VerificationMeta(
+    'direction',
+  );
+  @override
+  late final GeneratedColumn<String> direction = GeneratedColumn<String>(
+    'direction',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _quantityMeta = const VerificationMeta(
+    'quantity',
+  );
+  @override
+  late final GeneratedColumn<int> quantity = GeneratedColumn<int>(
+    'quantity',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _stageKeyMeta = const VerificationMeta(
+    'stageKey',
+  );
+  @override
+  late final GeneratedColumn<String> stageKey = GeneratedColumn<String>(
+    'stage_key',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _nameMeta = const VerificationMeta('name');
+  @override
+  late final GeneratedColumn<String> name = GeneratedColumn<String>(
+    'name',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _cardIdMeta = const VerificationMeta('cardId');
+  @override
+  late final GeneratedColumn<String> cardId = GeneratedColumn<String>(
+    'card_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _cardRefMeta = const VerificationMeta(
+    'cardRef',
+  );
+  @override
+  late final GeneratedColumn<String> cardRef = GeneratedColumn<String>(
+    'card_ref',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _anyPrintingMeta = const VerificationMeta(
+    'anyPrinting',
+  );
+  @override
+  late final GeneratedColumn<bool> anyPrinting = GeneratedColumn<bool>(
+    'any_printing',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("any_printing" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
+  static const VerificationMeta _finishMeta = const VerificationMeta('finish');
+  @override
+  late final GeneratedColumn<int> finish = GeneratedColumn<int>(
+    'finish',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _languageCodeMeta = const VerificationMeta(
+    'languageCode',
+  );
+  @override
+  late final GeneratedColumn<String> languageCode = GeneratedColumn<String>(
+    'language_code',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _conditionCodeMeta = const VerificationMeta(
+    'conditionCode',
+  );
+  @override
+  late final GeneratedColumn<int> conditionCode = GeneratedColumn<int>(
+    'condition_code',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _setCodeMeta = const VerificationMeta(
+    'setCode',
+  );
+  @override
+  late final GeneratedColumn<String> setCode = GeneratedColumn<String>(
+    'set_code',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(''),
+  );
+  static const VerificationMeta _setNameMeta = const VerificationMeta(
+    'setName',
+  );
+  @override
+  late final GeneratedColumn<String> setName = GeneratedColumn<String>(
+    'set_name',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(''),
+  );
+  static const VerificationMeta _collectorNumberMeta = const VerificationMeta(
+    'collectorNumber',
+  );
+  @override
+  late final GeneratedColumn<String> collectorNumber = GeneratedColumn<String>(
+    'collector_number',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(''),
+  );
+  static const VerificationMeta _forTradeMeta = const VerificationMeta(
+    'forTrade',
+  );
+  @override
+  late final GeneratedColumn<bool> forTrade = GeneratedColumn<bool>(
+    'for_trade',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("for_trade" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
+  static const VerificationMeta _identityKeyMeta = const VerificationMeta(
+    'identityKey',
+  );
+  @override
+  late final GeneratedColumn<String> identityKey = GeneratedColumn<String>(
+    'identity_key',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _flagMeta = const VerificationMeta('flag');
+  @override
+  late final GeneratedColumn<String> flag = GeneratedColumn<String>(
+    'flag',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _sentAtMeta = const VerificationMeta('sentAt');
+  @override
+  late final GeneratedColumn<int> sentAt = GeneratedColumn<int>(
+    'sent_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _expectedCountMeta = const VerificationMeta(
+    'expectedCount',
+  );
+  @override
+  late final GeneratedColumn<int> expectedCount = GeneratedColumn<int>(
+    'expected_count',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _lastErrorMeta = const VerificationMeta(
+    'lastError',
+  );
+  @override
+  late final GeneratedColumn<String> lastError = GeneratedColumn<String>(
+    'last_error',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _stagedAtMeta = const VerificationMeta(
+    'stagedAt',
+  );
+  @override
+  late final GeneratedColumn<int> stagedAt = GeneratedColumn<int>(
+    'staged_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    listId,
+    direction,
+    quantity,
+    stageKey,
+    name,
+    cardId,
+    cardRef,
+    anyPrinting,
+    finish,
+    languageCode,
+    conditionCode,
+    setCode,
+    setName,
+    collectorNumber,
+    forTrade,
+    identityKey,
+    flag,
+    sentAt,
+    expectedCount,
+    lastError,
+    stagedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'staged_changes';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<StagedChange> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('list_id')) {
+      context.handle(
+        _listIdMeta,
+        listId.isAcceptableOrUnknown(data['list_id']!, _listIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_listIdMeta);
+    }
+    if (data.containsKey('direction')) {
+      context.handle(
+        _directionMeta,
+        direction.isAcceptableOrUnknown(data['direction']!, _directionMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_directionMeta);
+    }
+    if (data.containsKey('quantity')) {
+      context.handle(
+        _quantityMeta,
+        quantity.isAcceptableOrUnknown(data['quantity']!, _quantityMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_quantityMeta);
+    }
+    if (data.containsKey('stage_key')) {
+      context.handle(
+        _stageKeyMeta,
+        stageKey.isAcceptableOrUnknown(data['stage_key']!, _stageKeyMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_stageKeyMeta);
+    }
+    if (data.containsKey('name')) {
+      context.handle(
+        _nameMeta,
+        name.isAcceptableOrUnknown(data['name']!, _nameMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_nameMeta);
+    }
+    if (data.containsKey('card_id')) {
+      context.handle(
+        _cardIdMeta,
+        cardId.isAcceptableOrUnknown(data['card_id']!, _cardIdMeta),
+      );
+    }
+    if (data.containsKey('card_ref')) {
+      context.handle(
+        _cardRefMeta,
+        cardRef.isAcceptableOrUnknown(data['card_ref']!, _cardRefMeta),
+      );
+    }
+    if (data.containsKey('any_printing')) {
+      context.handle(
+        _anyPrintingMeta,
+        anyPrinting.isAcceptableOrUnknown(
+          data['any_printing']!,
+          _anyPrintingMeta,
+        ),
+      );
+    }
+    if (data.containsKey('finish')) {
+      context.handle(
+        _finishMeta,
+        finish.isAcceptableOrUnknown(data['finish']!, _finishMeta),
+      );
+    }
+    if (data.containsKey('language_code')) {
+      context.handle(
+        _languageCodeMeta,
+        languageCode.isAcceptableOrUnknown(
+          data['language_code']!,
+          _languageCodeMeta,
+        ),
+      );
+    }
+    if (data.containsKey('condition_code')) {
+      context.handle(
+        _conditionCodeMeta,
+        conditionCode.isAcceptableOrUnknown(
+          data['condition_code']!,
+          _conditionCodeMeta,
+        ),
+      );
+    }
+    if (data.containsKey('set_code')) {
+      context.handle(
+        _setCodeMeta,
+        setCode.isAcceptableOrUnknown(data['set_code']!, _setCodeMeta),
+      );
+    }
+    if (data.containsKey('set_name')) {
+      context.handle(
+        _setNameMeta,
+        setName.isAcceptableOrUnknown(data['set_name']!, _setNameMeta),
+      );
+    }
+    if (data.containsKey('collector_number')) {
+      context.handle(
+        _collectorNumberMeta,
+        collectorNumber.isAcceptableOrUnknown(
+          data['collector_number']!,
+          _collectorNumberMeta,
+        ),
+      );
+    }
+    if (data.containsKey('for_trade')) {
+      context.handle(
+        _forTradeMeta,
+        forTrade.isAcceptableOrUnknown(data['for_trade']!, _forTradeMeta),
+      );
+    }
+    if (data.containsKey('identity_key')) {
+      context.handle(
+        _identityKeyMeta,
+        identityKey.isAcceptableOrUnknown(
+          data['identity_key']!,
+          _identityKeyMeta,
+        ),
+      );
+    }
+    if (data.containsKey('flag')) {
+      context.handle(
+        _flagMeta,
+        flag.isAcceptableOrUnknown(data['flag']!, _flagMeta),
+      );
+    }
+    if (data.containsKey('sent_at')) {
+      context.handle(
+        _sentAtMeta,
+        sentAt.isAcceptableOrUnknown(data['sent_at']!, _sentAtMeta),
+      );
+    }
+    if (data.containsKey('expected_count')) {
+      context.handle(
+        _expectedCountMeta,
+        expectedCount.isAcceptableOrUnknown(
+          data['expected_count']!,
+          _expectedCountMeta,
+        ),
+      );
+    }
+    if (data.containsKey('last_error')) {
+      context.handle(
+        _lastErrorMeta,
+        lastError.isAcceptableOrUnknown(data['last_error']!, _lastErrorMeta),
+      );
+    }
+    if (data.containsKey('staged_at')) {
+      context.handle(
+        _stagedAtMeta,
+        stagedAt.isAcceptableOrUnknown(data['staged_at']!, _stagedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_stagedAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  List<Set<GeneratedColumn>> get uniqueKeys => [
+    {listId, direction, stageKey},
+  ];
+  @override
+  StagedChange map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return StagedChange(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}id'],
+      )!,
+      listId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}list_id'],
+      )!,
+      direction: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}direction'],
+      )!,
+      quantity: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}quantity'],
+      )!,
+      stageKey: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}stage_key'],
+      )!,
+      name: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}name'],
+      )!,
+      cardId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}card_id'],
+      ),
+      cardRef: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}card_ref'],
+      ),
+      anyPrinting: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}any_printing'],
+      )!,
+      finish: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}finish'],
+      ),
+      languageCode: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}language_code'],
+      ),
+      conditionCode: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}condition_code'],
+      ),
+      setCode: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}set_code'],
+      )!,
+      setName: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}set_name'],
+      )!,
+      collectorNumber: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}collector_number'],
+      )!,
+      forTrade: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}for_trade'],
+      )!,
+      identityKey: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}identity_key'],
+      ),
+      flag: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}flag'],
+      ),
+      sentAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}sent_at'],
+      ),
+      expectedCount: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}expected_count'],
+      ),
+      lastError: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}last_error'],
+      ),
+      stagedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}staged_at'],
+      )!,
+    );
+  }
+
+  @override
+  $StagedChangesTable createAlias(String alias) {
+    return $StagedChangesTable(attachedDatabase, alias);
+  }
+}
+
+class StagedChange extends DataClass implements Insertable<StagedChange> {
+  final int id;
+  final int listId;
+
+  /// `add` or `remove`.
+  final String direction;
+
+  /// Always at least 1; the direction carries the sign.
+  final int quantity;
+
+  /// One row per thing staged: a removal's [identityKey]; an addition's
+  /// printing (or card, if generic) and variant. Staging the same thing again
+  /// raises [quantity].
+  final String stageKey;
+  final String name;
+
+  /// Scryfall printing id; null for a generic addition and for a removal of a
+  /// row the app could not map.
+  final String? cardId;
+
+  /// A printing for art and matching — the scanned one for a generic
+  /// addition. Never sent.
+  final String? cardRef;
+
+  /// A generic ("any printing") addition, written by name only (D9).
+  final bool anyPrinting;
+  final int? finish;
+  final String? languageCode;
+  final int? conditionCode;
+  final String setCode;
+  final String setName;
+  final String collectorNumber;
+
+  /// An Inventory addition **also put up for trade** — sent with the import
+  /// as *Tradelist Count* (tradelist.md, decision 3; schema 4).
+  final bool forTrade;
+
+  /// The Deckbox row a removal is for — `ExternalEntries.identityKey`.
+  final String? identityKey;
+
+  /// Set by a pull when a removal can no longer be made: `gone`, `short:<n>`
+  /// (only n left), or `ambiguous` (two rows match). **A flagged removal sends
+  /// nothing**, not even the part that would fit.
+  final String? flag;
+
+  /// Unix seconds, set just before the request carrying this row goes out,
+  /// with [expectedCount] — what the row's count should be once it lands. The
+  /// next push checks a fresh pull against it before sending again, so a push
+  /// cut off after sending can never send twice.
+  final int? sentAt;
+  final int? expectedCount;
+
+  /// Why the last push did not send this row — kept with it, shown with it.
+  final String? lastError;
+  final int stagedAt;
+  const StagedChange({
+    required this.id,
+    required this.listId,
+    required this.direction,
+    required this.quantity,
+    required this.stageKey,
+    required this.name,
+    this.cardId,
+    this.cardRef,
+    required this.anyPrinting,
+    this.finish,
+    this.languageCode,
+    this.conditionCode,
+    required this.setCode,
+    required this.setName,
+    required this.collectorNumber,
+    required this.forTrade,
+    this.identityKey,
+    this.flag,
+    this.sentAt,
+    this.expectedCount,
+    this.lastError,
+    required this.stagedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    map['list_id'] = Variable<int>(listId);
+    map['direction'] = Variable<String>(direction);
+    map['quantity'] = Variable<int>(quantity);
+    map['stage_key'] = Variable<String>(stageKey);
+    map['name'] = Variable<String>(name);
+    if (!nullToAbsent || cardId != null) {
+      map['card_id'] = Variable<String>(cardId);
+    }
+    if (!nullToAbsent || cardRef != null) {
+      map['card_ref'] = Variable<String>(cardRef);
+    }
+    map['any_printing'] = Variable<bool>(anyPrinting);
+    if (!nullToAbsent || finish != null) {
+      map['finish'] = Variable<int>(finish);
+    }
+    if (!nullToAbsent || languageCode != null) {
+      map['language_code'] = Variable<String>(languageCode);
+    }
+    if (!nullToAbsent || conditionCode != null) {
+      map['condition_code'] = Variable<int>(conditionCode);
+    }
+    map['set_code'] = Variable<String>(setCode);
+    map['set_name'] = Variable<String>(setName);
+    map['collector_number'] = Variable<String>(collectorNumber);
+    map['for_trade'] = Variable<bool>(forTrade);
+    if (!nullToAbsent || identityKey != null) {
+      map['identity_key'] = Variable<String>(identityKey);
+    }
+    if (!nullToAbsent || flag != null) {
+      map['flag'] = Variable<String>(flag);
+    }
+    if (!nullToAbsent || sentAt != null) {
+      map['sent_at'] = Variable<int>(sentAt);
+    }
+    if (!nullToAbsent || expectedCount != null) {
+      map['expected_count'] = Variable<int>(expectedCount);
+    }
+    if (!nullToAbsent || lastError != null) {
+      map['last_error'] = Variable<String>(lastError);
+    }
+    map['staged_at'] = Variable<int>(stagedAt);
+    return map;
+  }
+
+  StagedChangesCompanion toCompanion(bool nullToAbsent) {
+    return StagedChangesCompanion(
+      id: Value(id),
+      listId: Value(listId),
+      direction: Value(direction),
+      quantity: Value(quantity),
+      stageKey: Value(stageKey),
+      name: Value(name),
+      cardId: cardId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(cardId),
+      cardRef: cardRef == null && nullToAbsent
+          ? const Value.absent()
+          : Value(cardRef),
+      anyPrinting: Value(anyPrinting),
+      finish: finish == null && nullToAbsent
+          ? const Value.absent()
+          : Value(finish),
+      languageCode: languageCode == null && nullToAbsent
+          ? const Value.absent()
+          : Value(languageCode),
+      conditionCode: conditionCode == null && nullToAbsent
+          ? const Value.absent()
+          : Value(conditionCode),
+      setCode: Value(setCode),
+      setName: Value(setName),
+      collectorNumber: Value(collectorNumber),
+      forTrade: Value(forTrade),
+      identityKey: identityKey == null && nullToAbsent
+          ? const Value.absent()
+          : Value(identityKey),
+      flag: flag == null && nullToAbsent ? const Value.absent() : Value(flag),
+      sentAt: sentAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(sentAt),
+      expectedCount: expectedCount == null && nullToAbsent
+          ? const Value.absent()
+          : Value(expectedCount),
+      lastError: lastError == null && nullToAbsent
+          ? const Value.absent()
+          : Value(lastError),
+      stagedAt: Value(stagedAt),
+    );
+  }
+
+  factory StagedChange.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return StagedChange(
+      id: serializer.fromJson<int>(json['id']),
+      listId: serializer.fromJson<int>(json['listId']),
+      direction: serializer.fromJson<String>(json['direction']),
+      quantity: serializer.fromJson<int>(json['quantity']),
+      stageKey: serializer.fromJson<String>(json['stageKey']),
+      name: serializer.fromJson<String>(json['name']),
+      cardId: serializer.fromJson<String?>(json['cardId']),
+      cardRef: serializer.fromJson<String?>(json['cardRef']),
+      anyPrinting: serializer.fromJson<bool>(json['anyPrinting']),
+      finish: serializer.fromJson<int?>(json['finish']),
+      languageCode: serializer.fromJson<String?>(json['languageCode']),
+      conditionCode: serializer.fromJson<int?>(json['conditionCode']),
+      setCode: serializer.fromJson<String>(json['setCode']),
+      setName: serializer.fromJson<String>(json['setName']),
+      collectorNumber: serializer.fromJson<String>(json['collectorNumber']),
+      forTrade: serializer.fromJson<bool>(json['forTrade']),
+      identityKey: serializer.fromJson<String?>(json['identityKey']),
+      flag: serializer.fromJson<String?>(json['flag']),
+      sentAt: serializer.fromJson<int?>(json['sentAt']),
+      expectedCount: serializer.fromJson<int?>(json['expectedCount']),
+      lastError: serializer.fromJson<String?>(json['lastError']),
+      stagedAt: serializer.fromJson<int>(json['stagedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'listId': serializer.toJson<int>(listId),
+      'direction': serializer.toJson<String>(direction),
+      'quantity': serializer.toJson<int>(quantity),
+      'stageKey': serializer.toJson<String>(stageKey),
+      'name': serializer.toJson<String>(name),
+      'cardId': serializer.toJson<String?>(cardId),
+      'cardRef': serializer.toJson<String?>(cardRef),
+      'anyPrinting': serializer.toJson<bool>(anyPrinting),
+      'finish': serializer.toJson<int?>(finish),
+      'languageCode': serializer.toJson<String?>(languageCode),
+      'conditionCode': serializer.toJson<int?>(conditionCode),
+      'setCode': serializer.toJson<String>(setCode),
+      'setName': serializer.toJson<String>(setName),
+      'collectorNumber': serializer.toJson<String>(collectorNumber),
+      'forTrade': serializer.toJson<bool>(forTrade),
+      'identityKey': serializer.toJson<String?>(identityKey),
+      'flag': serializer.toJson<String?>(flag),
+      'sentAt': serializer.toJson<int?>(sentAt),
+      'expectedCount': serializer.toJson<int?>(expectedCount),
+      'lastError': serializer.toJson<String?>(lastError),
+      'stagedAt': serializer.toJson<int>(stagedAt),
+    };
+  }
+
+  StagedChange copyWith({
+    int? id,
+    int? listId,
+    String? direction,
+    int? quantity,
+    String? stageKey,
+    String? name,
+    Value<String?> cardId = const Value.absent(),
+    Value<String?> cardRef = const Value.absent(),
+    bool? anyPrinting,
+    Value<int?> finish = const Value.absent(),
+    Value<String?> languageCode = const Value.absent(),
+    Value<int?> conditionCode = const Value.absent(),
+    String? setCode,
+    String? setName,
+    String? collectorNumber,
+    bool? forTrade,
+    Value<String?> identityKey = const Value.absent(),
+    Value<String?> flag = const Value.absent(),
+    Value<int?> sentAt = const Value.absent(),
+    Value<int?> expectedCount = const Value.absent(),
+    Value<String?> lastError = const Value.absent(),
+    int? stagedAt,
+  }) => StagedChange(
+    id: id ?? this.id,
+    listId: listId ?? this.listId,
+    direction: direction ?? this.direction,
+    quantity: quantity ?? this.quantity,
+    stageKey: stageKey ?? this.stageKey,
+    name: name ?? this.name,
+    cardId: cardId.present ? cardId.value : this.cardId,
+    cardRef: cardRef.present ? cardRef.value : this.cardRef,
+    anyPrinting: anyPrinting ?? this.anyPrinting,
+    finish: finish.present ? finish.value : this.finish,
+    languageCode: languageCode.present ? languageCode.value : this.languageCode,
+    conditionCode: conditionCode.present
+        ? conditionCode.value
+        : this.conditionCode,
+    setCode: setCode ?? this.setCode,
+    setName: setName ?? this.setName,
+    collectorNumber: collectorNumber ?? this.collectorNumber,
+    forTrade: forTrade ?? this.forTrade,
+    identityKey: identityKey.present ? identityKey.value : this.identityKey,
+    flag: flag.present ? flag.value : this.flag,
+    sentAt: sentAt.present ? sentAt.value : this.sentAt,
+    expectedCount: expectedCount.present
+        ? expectedCount.value
+        : this.expectedCount,
+    lastError: lastError.present ? lastError.value : this.lastError,
+    stagedAt: stagedAt ?? this.stagedAt,
+  );
+  StagedChange copyWithCompanion(StagedChangesCompanion data) {
+    return StagedChange(
+      id: data.id.present ? data.id.value : this.id,
+      listId: data.listId.present ? data.listId.value : this.listId,
+      direction: data.direction.present ? data.direction.value : this.direction,
+      quantity: data.quantity.present ? data.quantity.value : this.quantity,
+      stageKey: data.stageKey.present ? data.stageKey.value : this.stageKey,
+      name: data.name.present ? data.name.value : this.name,
+      cardId: data.cardId.present ? data.cardId.value : this.cardId,
+      cardRef: data.cardRef.present ? data.cardRef.value : this.cardRef,
+      anyPrinting: data.anyPrinting.present
+          ? data.anyPrinting.value
+          : this.anyPrinting,
+      finish: data.finish.present ? data.finish.value : this.finish,
+      languageCode: data.languageCode.present
+          ? data.languageCode.value
+          : this.languageCode,
+      conditionCode: data.conditionCode.present
+          ? data.conditionCode.value
+          : this.conditionCode,
+      setCode: data.setCode.present ? data.setCode.value : this.setCode,
+      setName: data.setName.present ? data.setName.value : this.setName,
+      collectorNumber: data.collectorNumber.present
+          ? data.collectorNumber.value
+          : this.collectorNumber,
+      forTrade: data.forTrade.present ? data.forTrade.value : this.forTrade,
+      identityKey: data.identityKey.present
+          ? data.identityKey.value
+          : this.identityKey,
+      flag: data.flag.present ? data.flag.value : this.flag,
+      sentAt: data.sentAt.present ? data.sentAt.value : this.sentAt,
+      expectedCount: data.expectedCount.present
+          ? data.expectedCount.value
+          : this.expectedCount,
+      lastError: data.lastError.present ? data.lastError.value : this.lastError,
+      stagedAt: data.stagedAt.present ? data.stagedAt.value : this.stagedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('StagedChange(')
+          ..write('id: $id, ')
+          ..write('listId: $listId, ')
+          ..write('direction: $direction, ')
+          ..write('quantity: $quantity, ')
+          ..write('stageKey: $stageKey, ')
+          ..write('name: $name, ')
+          ..write('cardId: $cardId, ')
+          ..write('cardRef: $cardRef, ')
+          ..write('anyPrinting: $anyPrinting, ')
+          ..write('finish: $finish, ')
+          ..write('languageCode: $languageCode, ')
+          ..write('conditionCode: $conditionCode, ')
+          ..write('setCode: $setCode, ')
+          ..write('setName: $setName, ')
+          ..write('collectorNumber: $collectorNumber, ')
+          ..write('forTrade: $forTrade, ')
+          ..write('identityKey: $identityKey, ')
+          ..write('flag: $flag, ')
+          ..write('sentAt: $sentAt, ')
+          ..write('expectedCount: $expectedCount, ')
+          ..write('lastError: $lastError, ')
+          ..write('stagedAt: $stagedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hashAll([
+    id,
+    listId,
+    direction,
+    quantity,
+    stageKey,
+    name,
+    cardId,
+    cardRef,
+    anyPrinting,
+    finish,
+    languageCode,
+    conditionCode,
+    setCode,
+    setName,
+    collectorNumber,
+    forTrade,
+    identityKey,
+    flag,
+    sentAt,
+    expectedCount,
+    lastError,
+    stagedAt,
+  ]);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is StagedChange &&
+          other.id == this.id &&
+          other.listId == this.listId &&
+          other.direction == this.direction &&
+          other.quantity == this.quantity &&
+          other.stageKey == this.stageKey &&
+          other.name == this.name &&
+          other.cardId == this.cardId &&
+          other.cardRef == this.cardRef &&
+          other.anyPrinting == this.anyPrinting &&
+          other.finish == this.finish &&
+          other.languageCode == this.languageCode &&
+          other.conditionCode == this.conditionCode &&
+          other.setCode == this.setCode &&
+          other.setName == this.setName &&
+          other.collectorNumber == this.collectorNumber &&
+          other.forTrade == this.forTrade &&
+          other.identityKey == this.identityKey &&
+          other.flag == this.flag &&
+          other.sentAt == this.sentAt &&
+          other.expectedCount == this.expectedCount &&
+          other.lastError == this.lastError &&
+          other.stagedAt == this.stagedAt);
+}
+
+class StagedChangesCompanion extends UpdateCompanion<StagedChange> {
+  final Value<int> id;
+  final Value<int> listId;
+  final Value<String> direction;
+  final Value<int> quantity;
+  final Value<String> stageKey;
+  final Value<String> name;
+  final Value<String?> cardId;
+  final Value<String?> cardRef;
+  final Value<bool> anyPrinting;
+  final Value<int?> finish;
+  final Value<String?> languageCode;
+  final Value<int?> conditionCode;
+  final Value<String> setCode;
+  final Value<String> setName;
+  final Value<String> collectorNumber;
+  final Value<bool> forTrade;
+  final Value<String?> identityKey;
+  final Value<String?> flag;
+  final Value<int?> sentAt;
+  final Value<int?> expectedCount;
+  final Value<String?> lastError;
+  final Value<int> stagedAt;
+  const StagedChangesCompanion({
+    this.id = const Value.absent(),
+    this.listId = const Value.absent(),
+    this.direction = const Value.absent(),
+    this.quantity = const Value.absent(),
+    this.stageKey = const Value.absent(),
+    this.name = const Value.absent(),
+    this.cardId = const Value.absent(),
+    this.cardRef = const Value.absent(),
+    this.anyPrinting = const Value.absent(),
+    this.finish = const Value.absent(),
+    this.languageCode = const Value.absent(),
+    this.conditionCode = const Value.absent(),
+    this.setCode = const Value.absent(),
+    this.setName = const Value.absent(),
+    this.collectorNumber = const Value.absent(),
+    this.forTrade = const Value.absent(),
+    this.identityKey = const Value.absent(),
+    this.flag = const Value.absent(),
+    this.sentAt = const Value.absent(),
+    this.expectedCount = const Value.absent(),
+    this.lastError = const Value.absent(),
+    this.stagedAt = const Value.absent(),
+  });
+  StagedChangesCompanion.insert({
+    this.id = const Value.absent(),
+    required int listId,
+    required String direction,
+    required int quantity,
+    required String stageKey,
+    required String name,
+    this.cardId = const Value.absent(),
+    this.cardRef = const Value.absent(),
+    this.anyPrinting = const Value.absent(),
+    this.finish = const Value.absent(),
+    this.languageCode = const Value.absent(),
+    this.conditionCode = const Value.absent(),
+    this.setCode = const Value.absent(),
+    this.setName = const Value.absent(),
+    this.collectorNumber = const Value.absent(),
+    this.forTrade = const Value.absent(),
+    this.identityKey = const Value.absent(),
+    this.flag = const Value.absent(),
+    this.sentAt = const Value.absent(),
+    this.expectedCount = const Value.absent(),
+    this.lastError = const Value.absent(),
+    required int stagedAt,
+  }) : listId = Value(listId),
+       direction = Value(direction),
+       quantity = Value(quantity),
+       stageKey = Value(stageKey),
+       name = Value(name),
+       stagedAt = Value(stagedAt);
+  static Insertable<StagedChange> custom({
+    Expression<int>? id,
+    Expression<int>? listId,
+    Expression<String>? direction,
+    Expression<int>? quantity,
+    Expression<String>? stageKey,
+    Expression<String>? name,
+    Expression<String>? cardId,
+    Expression<String>? cardRef,
+    Expression<bool>? anyPrinting,
+    Expression<int>? finish,
+    Expression<String>? languageCode,
+    Expression<int>? conditionCode,
+    Expression<String>? setCode,
+    Expression<String>? setName,
+    Expression<String>? collectorNumber,
+    Expression<bool>? forTrade,
+    Expression<String>? identityKey,
+    Expression<String>? flag,
+    Expression<int>? sentAt,
+    Expression<int>? expectedCount,
+    Expression<String>? lastError,
+    Expression<int>? stagedAt,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (listId != null) 'list_id': listId,
+      if (direction != null) 'direction': direction,
+      if (quantity != null) 'quantity': quantity,
+      if (stageKey != null) 'stage_key': stageKey,
+      if (name != null) 'name': name,
+      if (cardId != null) 'card_id': cardId,
+      if (cardRef != null) 'card_ref': cardRef,
+      if (anyPrinting != null) 'any_printing': anyPrinting,
+      if (finish != null) 'finish': finish,
+      if (languageCode != null) 'language_code': languageCode,
+      if (conditionCode != null) 'condition_code': conditionCode,
+      if (setCode != null) 'set_code': setCode,
+      if (setName != null) 'set_name': setName,
+      if (collectorNumber != null) 'collector_number': collectorNumber,
+      if (forTrade != null) 'for_trade': forTrade,
+      if (identityKey != null) 'identity_key': identityKey,
+      if (flag != null) 'flag': flag,
+      if (sentAt != null) 'sent_at': sentAt,
+      if (expectedCount != null) 'expected_count': expectedCount,
+      if (lastError != null) 'last_error': lastError,
+      if (stagedAt != null) 'staged_at': stagedAt,
+    });
+  }
+
+  StagedChangesCompanion copyWith({
+    Value<int>? id,
+    Value<int>? listId,
+    Value<String>? direction,
+    Value<int>? quantity,
+    Value<String>? stageKey,
+    Value<String>? name,
+    Value<String?>? cardId,
+    Value<String?>? cardRef,
+    Value<bool>? anyPrinting,
+    Value<int?>? finish,
+    Value<String?>? languageCode,
+    Value<int?>? conditionCode,
+    Value<String>? setCode,
+    Value<String>? setName,
+    Value<String>? collectorNumber,
+    Value<bool>? forTrade,
+    Value<String?>? identityKey,
+    Value<String?>? flag,
+    Value<int?>? sentAt,
+    Value<int?>? expectedCount,
+    Value<String?>? lastError,
+    Value<int>? stagedAt,
+  }) {
+    return StagedChangesCompanion(
+      id: id ?? this.id,
+      listId: listId ?? this.listId,
+      direction: direction ?? this.direction,
+      quantity: quantity ?? this.quantity,
+      stageKey: stageKey ?? this.stageKey,
+      name: name ?? this.name,
+      cardId: cardId ?? this.cardId,
+      cardRef: cardRef ?? this.cardRef,
+      anyPrinting: anyPrinting ?? this.anyPrinting,
+      finish: finish ?? this.finish,
+      languageCode: languageCode ?? this.languageCode,
+      conditionCode: conditionCode ?? this.conditionCode,
+      setCode: setCode ?? this.setCode,
+      setName: setName ?? this.setName,
+      collectorNumber: collectorNumber ?? this.collectorNumber,
+      forTrade: forTrade ?? this.forTrade,
+      identityKey: identityKey ?? this.identityKey,
+      flag: flag ?? this.flag,
+      sentAt: sentAt ?? this.sentAt,
+      expectedCount: expectedCount ?? this.expectedCount,
+      lastError: lastError ?? this.lastError,
+      stagedAt: stagedAt ?? this.stagedAt,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (listId.present) {
+      map['list_id'] = Variable<int>(listId.value);
+    }
+    if (direction.present) {
+      map['direction'] = Variable<String>(direction.value);
+    }
+    if (quantity.present) {
+      map['quantity'] = Variable<int>(quantity.value);
+    }
+    if (stageKey.present) {
+      map['stage_key'] = Variable<String>(stageKey.value);
+    }
+    if (name.present) {
+      map['name'] = Variable<String>(name.value);
+    }
+    if (cardId.present) {
+      map['card_id'] = Variable<String>(cardId.value);
+    }
+    if (cardRef.present) {
+      map['card_ref'] = Variable<String>(cardRef.value);
+    }
+    if (anyPrinting.present) {
+      map['any_printing'] = Variable<bool>(anyPrinting.value);
+    }
+    if (finish.present) {
+      map['finish'] = Variable<int>(finish.value);
+    }
+    if (languageCode.present) {
+      map['language_code'] = Variable<String>(languageCode.value);
+    }
+    if (conditionCode.present) {
+      map['condition_code'] = Variable<int>(conditionCode.value);
+    }
+    if (setCode.present) {
+      map['set_code'] = Variable<String>(setCode.value);
+    }
+    if (setName.present) {
+      map['set_name'] = Variable<String>(setName.value);
+    }
+    if (collectorNumber.present) {
+      map['collector_number'] = Variable<String>(collectorNumber.value);
+    }
+    if (forTrade.present) {
+      map['for_trade'] = Variable<bool>(forTrade.value);
+    }
+    if (identityKey.present) {
+      map['identity_key'] = Variable<String>(identityKey.value);
+    }
+    if (flag.present) {
+      map['flag'] = Variable<String>(flag.value);
+    }
+    if (sentAt.present) {
+      map['sent_at'] = Variable<int>(sentAt.value);
+    }
+    if (expectedCount.present) {
+      map['expected_count'] = Variable<int>(expectedCount.value);
+    }
+    if (lastError.present) {
+      map['last_error'] = Variable<String>(lastError.value);
+    }
+    if (stagedAt.present) {
+      map['staged_at'] = Variable<int>(stagedAt.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('StagedChangesCompanion(')
+          ..write('id: $id, ')
+          ..write('listId: $listId, ')
+          ..write('direction: $direction, ')
+          ..write('quantity: $quantity, ')
+          ..write('stageKey: $stageKey, ')
+          ..write('name: $name, ')
+          ..write('cardId: $cardId, ')
+          ..write('cardRef: $cardRef, ')
+          ..write('anyPrinting: $anyPrinting, ')
+          ..write('finish: $finish, ')
+          ..write('languageCode: $languageCode, ')
+          ..write('conditionCode: $conditionCode, ')
+          ..write('setCode: $setCode, ')
+          ..write('setName: $setName, ')
+          ..write('collectorNumber: $collectorNumber, ')
+          ..write('forTrade: $forTrade, ')
+          ..write('identityKey: $identityKey, ')
+          ..write('flag: $flag, ')
+          ..write('sentAt: $sentAt, ')
+          ..write('expectedCount: $expectedCount, ')
+          ..write('lastError: $lastError, ')
+          ..write('stagedAt: $stagedAt')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$CollectionDatabase extends GeneratedDatabase {
   _$CollectionDatabase(QueryExecutor e) : super(e);
   $CollectionDatabaseManager get managers => $CollectionDatabaseManager(this);
@@ -3397,6 +4637,7 @@ abstract class _$CollectionDatabase extends GeneratedDatabase {
   late final $ExternalEntriesTable externalEntries = $ExternalEntriesTable(
     this,
   );
+  late final $StagedChangesTable stagedChanges = $StagedChangesTable(this);
   late final ExternalDao externalDao = ExternalDao(this as CollectionDatabase);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
@@ -3408,6 +4649,7 @@ abstract class _$CollectionDatabase extends GeneratedDatabase {
     externalAccounts,
     externalLists,
     externalEntries,
+    stagedChanges,
   ];
   @override
   StreamQueryUpdateRules get streamUpdateRules => const StreamQueryUpdateRules([
@@ -3431,6 +4673,13 @@ abstract class _$CollectionDatabase extends GeneratedDatabase {
         limitUpdateKind: UpdateKind.delete,
       ),
       result: [TableUpdate('external_entries', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'external_lists',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('staged_changes', kind: UpdateKind.delete)],
     ),
   ]);
 }
@@ -4580,6 +5829,25 @@ final class $$ExternalListsTableReferences
       manager.$state.copyWith(prefetchedData: cache),
     );
   }
+
+  static MultiTypedResultKey<$StagedChangesTable, List<StagedChange>>
+  _stagedChangesRefsTable(_$CollectionDatabase db) =>
+      MultiTypedResultKey.fromTable(
+        db.stagedChanges,
+        aliasName: 'external_lists__id__staged_changes__list_id',
+      );
+
+  $$StagedChangesTableProcessedTableManager get stagedChangesRefs {
+    final manager = $$StagedChangesTableTableManager(
+      $_db,
+      $_db.stagedChanges,
+    ).filter((f) => f.listId.id.sqlEquals($_itemColumn<int>('id')!));
+
+    final cache = $_typedResult.readTableOrNull(_stagedChangesRefsTable($_db));
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: cache),
+    );
+  }
 }
 
 class $$ExternalListsTableFilterComposer
@@ -4670,6 +5938,31 @@ class $$ExternalListsTableFilterComposer
           }) => $$ExternalEntriesTableFilterComposer(
             $db: $db,
             $table: $db.externalEntries,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return f(composer);
+  }
+
+  Expression<bool> stagedChangesRefs(
+    Expression<bool> Function($$StagedChangesTableFilterComposer f) f,
+  ) {
+    final $$StagedChangesTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.stagedChanges,
+      getReferencedColumn: (t) => t.listId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$StagedChangesTableFilterComposer(
+            $db: $db,
+            $table: $db.stagedChanges,
             $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
             joinBuilder: joinBuilder,
             $removeJoinBuilderFromRootComposer:
@@ -4839,6 +6132,31 @@ class $$ExternalListsTableAnnotationComposer
     );
     return f(composer);
   }
+
+  Expression<T> stagedChangesRefs<T extends Object>(
+    Expression<T> Function($$StagedChangesTableAnnotationComposer a) f,
+  ) {
+    final $$StagedChangesTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.stagedChanges,
+      getReferencedColumn: (t) => t.listId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$StagedChangesTableAnnotationComposer(
+            $db: $db,
+            $table: $db.stagedChanges,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return f(composer);
+  }
 }
 
 class $$ExternalListsTableTableManager
@@ -4854,7 +6172,11 @@ class $$ExternalListsTableTableManager
           $$ExternalListsTableUpdateCompanionBuilder,
           (ExternalList, $$ExternalListsTableReferences),
           ExternalList,
-          PrefetchHooks Function({bool accountId, bool externalEntriesRefs})
+          PrefetchHooks Function({
+            bool accountId,
+            bool externalEntriesRefs,
+            bool stagedChangesRefs,
+          })
         > {
   $$ExternalListsTableTableManager(
     _$CollectionDatabase db,
@@ -4922,11 +6244,16 @@ class $$ExternalListsTableTableManager
               )
               .toList(),
           prefetchHooksCallback:
-              ({accountId = false, externalEntriesRefs = false}) {
+              ({
+                accountId = false,
+                externalEntriesRefs = false,
+                stagedChangesRefs = false,
+              }) {
                 return PrefetchHooks(
                   db: db,
                   explicitlyWatchedTables: [
                     if (externalEntriesRefs) db.externalEntries,
+                    if (stagedChangesRefs) db.stagedChanges,
                   ],
                   addJoins:
                       <
@@ -4985,6 +6312,27 @@ class $$ExternalListsTableTableManager
                               ),
                           typedResults: items,
                         ),
+                      if (stagedChangesRefs)
+                        await $_getPrefetchedData<
+                          ExternalList,
+                          $ExternalListsTable,
+                          StagedChange
+                        >(
+                          currentTable: table,
+                          referencedTable: $$ExternalListsTableReferences
+                              ._stagedChangesRefsTable(db),
+                          managerFromTypedResult: (p0) =>
+                              $$ExternalListsTableReferences(
+                                db,
+                                table,
+                                p0,
+                              ).stagedChangesRefs,
+                          referencedItemsForCurrentItem:
+                              (item, referencedItems) => referencedItems.where(
+                                (e) => e.listId == item.id,
+                              ),
+                          typedResults: items,
+                        ),
                     ];
                   },
                 );
@@ -5005,7 +6353,11 @@ typedef $$ExternalListsTableProcessedTableManager =
       $$ExternalListsTableUpdateCompanionBuilder,
       (ExternalList, $$ExternalListsTableReferences),
       ExternalList,
-      PrefetchHooks Function({bool accountId, bool externalEntriesRefs})
+      PrefetchHooks Function({
+        bool accountId,
+        bool externalEntriesRefs,
+        bool stagedChangesRefs,
+      })
     >;
 typedef $$ExternalEntriesTableCreateCompanionBuilder =
     ExternalEntriesCompanion Function({
@@ -5694,6 +7046,664 @@ typedef $$ExternalEntriesTableProcessedTableManager =
       ExternalEntry,
       PrefetchHooks Function({bool listId})
     >;
+typedef $$StagedChangesTableCreateCompanionBuilder =
+    StagedChangesCompanion Function({
+      Value<int> id,
+      required int listId,
+      required String direction,
+      required int quantity,
+      required String stageKey,
+      required String name,
+      Value<String?> cardId,
+      Value<String?> cardRef,
+      Value<bool> anyPrinting,
+      Value<int?> finish,
+      Value<String?> languageCode,
+      Value<int?> conditionCode,
+      Value<String> setCode,
+      Value<String> setName,
+      Value<String> collectorNumber,
+      Value<bool> forTrade,
+      Value<String?> identityKey,
+      Value<String?> flag,
+      Value<int?> sentAt,
+      Value<int?> expectedCount,
+      Value<String?> lastError,
+      required int stagedAt,
+    });
+typedef $$StagedChangesTableUpdateCompanionBuilder =
+    StagedChangesCompanion Function({
+      Value<int> id,
+      Value<int> listId,
+      Value<String> direction,
+      Value<int> quantity,
+      Value<String> stageKey,
+      Value<String> name,
+      Value<String?> cardId,
+      Value<String?> cardRef,
+      Value<bool> anyPrinting,
+      Value<int?> finish,
+      Value<String?> languageCode,
+      Value<int?> conditionCode,
+      Value<String> setCode,
+      Value<String> setName,
+      Value<String> collectorNumber,
+      Value<bool> forTrade,
+      Value<String?> identityKey,
+      Value<String?> flag,
+      Value<int?> sentAt,
+      Value<int?> expectedCount,
+      Value<String?> lastError,
+      Value<int> stagedAt,
+    });
+
+final class $$StagedChangesTableReferences
+    extends
+        BaseReferences<
+          _$CollectionDatabase,
+          $StagedChangesTable,
+          StagedChange
+        > {
+  $$StagedChangesTableReferences(
+    super.$_db,
+    super.$_table,
+    super.$_typedResult,
+  );
+
+  static $ExternalListsTable _listIdTable(_$CollectionDatabase db) => db
+      .externalLists
+      .createAlias('staged_changes__list_id__external_lists__id');
+
+  $$ExternalListsTableProcessedTableManager get listId {
+    final $_column = $_itemColumn<int>('list_id')!;
+
+    final manager = $$ExternalListsTableTableManager(
+      $_db,
+      $_db.externalLists,
+    ).filter((f) => f.id.sqlEquals($_column));
+    final item = $_typedResult.readTableOrNull(_listIdTable($_db));
+    if (item == null) return manager;
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: [item]),
+    );
+  }
+}
+
+class $$StagedChangesTableFilterComposer
+    extends Composer<_$CollectionDatabase, $StagedChangesTable> {
+  $$StagedChangesTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get direction => $composableBuilder(
+    column: $table.direction,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get quantity => $composableBuilder(
+    column: $table.quantity,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get stageKey => $composableBuilder(
+    column: $table.stageKey,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get name => $composableBuilder(
+    column: $table.name,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get cardId => $composableBuilder(
+    column: $table.cardId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get cardRef => $composableBuilder(
+    column: $table.cardRef,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get anyPrinting => $composableBuilder(
+    column: $table.anyPrinting,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get finish => $composableBuilder(
+    column: $table.finish,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get languageCode => $composableBuilder(
+    column: $table.languageCode,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get conditionCode => $composableBuilder(
+    column: $table.conditionCode,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get setCode => $composableBuilder(
+    column: $table.setCode,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get setName => $composableBuilder(
+    column: $table.setName,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get collectorNumber => $composableBuilder(
+    column: $table.collectorNumber,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get forTrade => $composableBuilder(
+    column: $table.forTrade,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get identityKey => $composableBuilder(
+    column: $table.identityKey,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get flag => $composableBuilder(
+    column: $table.flag,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get sentAt => $composableBuilder(
+    column: $table.sentAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get expectedCount => $composableBuilder(
+    column: $table.expectedCount,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get lastError => $composableBuilder(
+    column: $table.lastError,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get stagedAt => $composableBuilder(
+    column: $table.stagedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  $$ExternalListsTableFilterComposer get listId {
+    final $$ExternalListsTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.listId,
+      referencedTable: $db.externalLists,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ExternalListsTableFilterComposer(
+            $db: $db,
+            $table: $db.externalLists,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$StagedChangesTableOrderingComposer
+    extends Composer<_$CollectionDatabase, $StagedChangesTable> {
+  $$StagedChangesTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get direction => $composableBuilder(
+    column: $table.direction,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get quantity => $composableBuilder(
+    column: $table.quantity,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get stageKey => $composableBuilder(
+    column: $table.stageKey,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get name => $composableBuilder(
+    column: $table.name,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get cardId => $composableBuilder(
+    column: $table.cardId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get cardRef => $composableBuilder(
+    column: $table.cardRef,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get anyPrinting => $composableBuilder(
+    column: $table.anyPrinting,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get finish => $composableBuilder(
+    column: $table.finish,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get languageCode => $composableBuilder(
+    column: $table.languageCode,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get conditionCode => $composableBuilder(
+    column: $table.conditionCode,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get setCode => $composableBuilder(
+    column: $table.setCode,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get setName => $composableBuilder(
+    column: $table.setName,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get collectorNumber => $composableBuilder(
+    column: $table.collectorNumber,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get forTrade => $composableBuilder(
+    column: $table.forTrade,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get identityKey => $composableBuilder(
+    column: $table.identityKey,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get flag => $composableBuilder(
+    column: $table.flag,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get sentAt => $composableBuilder(
+    column: $table.sentAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get expectedCount => $composableBuilder(
+    column: $table.expectedCount,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get lastError => $composableBuilder(
+    column: $table.lastError,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get stagedAt => $composableBuilder(
+    column: $table.stagedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  $$ExternalListsTableOrderingComposer get listId {
+    final $$ExternalListsTableOrderingComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.listId,
+      referencedTable: $db.externalLists,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ExternalListsTableOrderingComposer(
+            $db: $db,
+            $table: $db.externalLists,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$StagedChangesTableAnnotationComposer
+    extends Composer<_$CollectionDatabase, $StagedChangesTable> {
+  $$StagedChangesTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get direction =>
+      $composableBuilder(column: $table.direction, builder: (column) => column);
+
+  GeneratedColumn<int> get quantity =>
+      $composableBuilder(column: $table.quantity, builder: (column) => column);
+
+  GeneratedColumn<String> get stageKey =>
+      $composableBuilder(column: $table.stageKey, builder: (column) => column);
+
+  GeneratedColumn<String> get name =>
+      $composableBuilder(column: $table.name, builder: (column) => column);
+
+  GeneratedColumn<String> get cardId =>
+      $composableBuilder(column: $table.cardId, builder: (column) => column);
+
+  GeneratedColumn<String> get cardRef =>
+      $composableBuilder(column: $table.cardRef, builder: (column) => column);
+
+  GeneratedColumn<bool> get anyPrinting => $composableBuilder(
+    column: $table.anyPrinting,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get finish =>
+      $composableBuilder(column: $table.finish, builder: (column) => column);
+
+  GeneratedColumn<String> get languageCode => $composableBuilder(
+    column: $table.languageCode,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get conditionCode => $composableBuilder(
+    column: $table.conditionCode,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get setCode =>
+      $composableBuilder(column: $table.setCode, builder: (column) => column);
+
+  GeneratedColumn<String> get setName =>
+      $composableBuilder(column: $table.setName, builder: (column) => column);
+
+  GeneratedColumn<String> get collectorNumber => $composableBuilder(
+    column: $table.collectorNumber,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<bool> get forTrade =>
+      $composableBuilder(column: $table.forTrade, builder: (column) => column);
+
+  GeneratedColumn<String> get identityKey => $composableBuilder(
+    column: $table.identityKey,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get flag =>
+      $composableBuilder(column: $table.flag, builder: (column) => column);
+
+  GeneratedColumn<int> get sentAt =>
+      $composableBuilder(column: $table.sentAt, builder: (column) => column);
+
+  GeneratedColumn<int> get expectedCount => $composableBuilder(
+    column: $table.expectedCount,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get lastError =>
+      $composableBuilder(column: $table.lastError, builder: (column) => column);
+
+  GeneratedColumn<int> get stagedAt =>
+      $composableBuilder(column: $table.stagedAt, builder: (column) => column);
+
+  $$ExternalListsTableAnnotationComposer get listId {
+    final $$ExternalListsTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.listId,
+      referencedTable: $db.externalLists,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ExternalListsTableAnnotationComposer(
+            $db: $db,
+            $table: $db.externalLists,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$StagedChangesTableTableManager
+    extends
+        RootTableManager<
+          _$CollectionDatabase,
+          $StagedChangesTable,
+          StagedChange,
+          $$StagedChangesTableFilterComposer,
+          $$StagedChangesTableOrderingComposer,
+          $$StagedChangesTableAnnotationComposer,
+          $$StagedChangesTableCreateCompanionBuilder,
+          $$StagedChangesTableUpdateCompanionBuilder,
+          (StagedChange, $$StagedChangesTableReferences),
+          StagedChange,
+          PrefetchHooks Function({bool listId})
+        > {
+  $$StagedChangesTableTableManager(
+    _$CollectionDatabase db,
+    $StagedChangesTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$StagedChangesTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$StagedChangesTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$StagedChangesTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                Value<int> listId = const Value.absent(),
+                Value<String> direction = const Value.absent(),
+                Value<int> quantity = const Value.absent(),
+                Value<String> stageKey = const Value.absent(),
+                Value<String> name = const Value.absent(),
+                Value<String?> cardId = const Value.absent(),
+                Value<String?> cardRef = const Value.absent(),
+                Value<bool> anyPrinting = const Value.absent(),
+                Value<int?> finish = const Value.absent(),
+                Value<String?> languageCode = const Value.absent(),
+                Value<int?> conditionCode = const Value.absent(),
+                Value<String> setCode = const Value.absent(),
+                Value<String> setName = const Value.absent(),
+                Value<String> collectorNumber = const Value.absent(),
+                Value<bool> forTrade = const Value.absent(),
+                Value<String?> identityKey = const Value.absent(),
+                Value<String?> flag = const Value.absent(),
+                Value<int?> sentAt = const Value.absent(),
+                Value<int?> expectedCount = const Value.absent(),
+                Value<String?> lastError = const Value.absent(),
+                Value<int> stagedAt = const Value.absent(),
+              }) => StagedChangesCompanion(
+                id: id,
+                listId: listId,
+                direction: direction,
+                quantity: quantity,
+                stageKey: stageKey,
+                name: name,
+                cardId: cardId,
+                cardRef: cardRef,
+                anyPrinting: anyPrinting,
+                finish: finish,
+                languageCode: languageCode,
+                conditionCode: conditionCode,
+                setCode: setCode,
+                setName: setName,
+                collectorNumber: collectorNumber,
+                forTrade: forTrade,
+                identityKey: identityKey,
+                flag: flag,
+                sentAt: sentAt,
+                expectedCount: expectedCount,
+                lastError: lastError,
+                stagedAt: stagedAt,
+              ),
+          createCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                required int listId,
+                required String direction,
+                required int quantity,
+                required String stageKey,
+                required String name,
+                Value<String?> cardId = const Value.absent(),
+                Value<String?> cardRef = const Value.absent(),
+                Value<bool> anyPrinting = const Value.absent(),
+                Value<int?> finish = const Value.absent(),
+                Value<String?> languageCode = const Value.absent(),
+                Value<int?> conditionCode = const Value.absent(),
+                Value<String> setCode = const Value.absent(),
+                Value<String> setName = const Value.absent(),
+                Value<String> collectorNumber = const Value.absent(),
+                Value<bool> forTrade = const Value.absent(),
+                Value<String?> identityKey = const Value.absent(),
+                Value<String?> flag = const Value.absent(),
+                Value<int?> sentAt = const Value.absent(),
+                Value<int?> expectedCount = const Value.absent(),
+                Value<String?> lastError = const Value.absent(),
+                required int stagedAt,
+              }) => StagedChangesCompanion.insert(
+                id: id,
+                listId: listId,
+                direction: direction,
+                quantity: quantity,
+                stageKey: stageKey,
+                name: name,
+                cardId: cardId,
+                cardRef: cardRef,
+                anyPrinting: anyPrinting,
+                finish: finish,
+                languageCode: languageCode,
+                conditionCode: conditionCode,
+                setCode: setCode,
+                setName: setName,
+                collectorNumber: collectorNumber,
+                forTrade: forTrade,
+                identityKey: identityKey,
+                flag: flag,
+                sentAt: sentAt,
+                expectedCount: expectedCount,
+                lastError: lastError,
+                stagedAt: stagedAt,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable(table),
+                  $$StagedChangesTableReferences(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: ({listId = false}) {
+            return PrefetchHooks(
+              db: db,
+              explicitlyWatchedTables: [],
+              addJoins:
+                  <
+                    T extends TableManagerState<
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic
+                    >
+                  >(state) {
+                    if (listId) {
+                      state =
+                          state.withJoin(
+                                currentTable: table,
+                                currentColumn: table.listId,
+                                referencedTable: $$StagedChangesTableReferences
+                                    ._listIdTable(db),
+                                referencedColumn: $$StagedChangesTableReferences
+                                    ._listIdTable(db)
+                                    .id,
+                              )
+                              as T;
+                    }
+
+                    return state;
+                  },
+              getPrefetchedDataCallback: (items) async {
+                return [];
+              },
+            );
+          },
+        ),
+      );
+}
+
+typedef $$StagedChangesTableProcessedTableManager =
+    ProcessedTableManager<
+      _$CollectionDatabase,
+      $StagedChangesTable,
+      StagedChange,
+      $$StagedChangesTableFilterComposer,
+      $$StagedChangesTableOrderingComposer,
+      $$StagedChangesTableAnnotationComposer,
+      $$StagedChangesTableCreateCompanionBuilder,
+      $$StagedChangesTableUpdateCompanionBuilder,
+      (StagedChange, $$StagedChangesTableReferences),
+      StagedChange,
+      PrefetchHooks Function({bool listId})
+    >;
 
 class $CollectionDatabaseManager {
   final _$CollectionDatabase _db;
@@ -5708,4 +7718,6 @@ class $CollectionDatabaseManager {
       $$ExternalListsTableTableManager(_db, _db.externalLists);
   $$ExternalEntriesTableTableManager get externalEntries =>
       $$ExternalEntriesTableTableManager(_db, _db.externalEntries);
+  $$StagedChangesTableTableManager get stagedChanges =>
+      $$StagedChangesTableTableManager(_db, _db.stagedChanges);
 }

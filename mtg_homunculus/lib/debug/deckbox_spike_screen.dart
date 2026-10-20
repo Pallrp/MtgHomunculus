@@ -5,9 +5,12 @@ import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../core/logging/app_logger.dart';
+import '../features/card_lookup/data/cards_database.dart' show CardsDatabase;
 import '../features/card_lookup/data/collection_database.dart';
 import '../features/card_lookup/external/deckbox/deckbox_client.dart';
 import '../features/card_lookup/external/deckbox/deckbox_csv.dart';
+import '../features/card_lookup/external/deckbox/deckbox_mapping.dart';
+import '../features/card_lookup/external/deckbox/deckbox_row_panel.dart';
 import '../features/card_lookup/external/deckbox_sync.dart';
 import '../features/card_lookup/external/session_store.dart';
 import '../features/card_lookup/models/dev_flags.dart';
@@ -633,6 +636,716 @@ class _DeckboxSpikeScreenState extends State<DeckboxSpikeScreen> {
   }
 
   // ---------------------------------------------------------------------------
+  // T — Tradelist additions  (WRITES)
+  // ---------------------------------------------------------------------------
+
+  /// The Tradelist probes (2026-10-19): what an import does to the Tradelist
+  /// and the Inventory behind it, one row each, on rows picked from the test
+  /// account's own Inventory.
+  ///
+  /// - **T1** Inventory import of an exact variant already owned: added to the
+  ///   row, or a second row?
+  /// - **T2** Tradelist import of a card not owned: Inventory row created, with
+  ///   a trade count?
+  /// - **T3** Tradelist import of an exact variant owned once, none for trade:
+  ///   marks that copy, adds a copy, or refused?
+  /// - **T4** Inventory import with a `Tradelist Count` column, card not owned:
+  ///   does the import carry the trade count?
+  ///
+  /// **Second set** — can one Inventory import set trade counts on rows that
+  /// already exist, for a bulk *mark for trade* in one request?
+  ///
+  /// - **T5** `Count 1` + `Tradelist Count 1` on a row owned once, none for
+  ///   trade: 2 owned and 1 for trade, or something else?
+  /// - **T6** `Count 0` + `Tradelist Count 1` on such a row: refused, or the
+  ///   copy marked without adding one?
+  /// - **T7** `Count 0` + `Tradelist Count 1` on a row already all for trade:
+  ///   does the trade count **add** (→ 2, owned raised) or **replace** (stays)?
+  Future<void> _tradelistProbes({bool second = false}) async {
+    final what = second ? '3 one-row Inventory imports (T5–T7)' : '4 one-row imports (T1–T4) into Inventory and Tradelist';
+    if (!await _confirmWrite(what)) return;
+    await _guarded(second ? 't2_probes' : 't_probes', (client) async {
+      final stamp = _stamp();
+      final (lists, home) = await client.findLists();
+      final inv = lists.firstWhere((l) => l.kind == DeckboxListKind.inventory);
+      final trade = lists.firstWhere((l) => l.kind == DeckboxListKind.tradelist);
+      Future<List<Map<String, String>>> export(DeckboxListRef l) async =>
+          DeckboxCsv.rows((await client.exportCsv(l.setId, columns: 'Scryfall ID,Last Updated')).body);
+
+      final before = await export(inv);
+      final owned = {for (final r in before) r['Scryfall ID'] ?? ''};
+      final perPrinting = <String, int>{};
+      for (final r in before) {
+        perPrinting[r['Scryfall ID'] ?? ''] = (perPrinting[r['Scryfall ID'] ?? ''] ?? 0) + 1;
+      }
+      bool plain(Map<String, String> r) =>
+          r['Count'] == '1' &&
+          (r['Tradelist Count'] ?? '0') == '0' &&
+          (r['Printing Id'] ?? '').isNotEmpty &&
+          (r['Scryfall ID'] ?? '').isNotEmpty &&
+          (r['Foil'] ?? '').isEmpty &&
+          perPrinting[r['Scryfall ID']] == 1 &&
+          DeckboxMapping.flagColumns.every((f) => (r[f] ?? '').isEmpty);
+      final plainRows = before.where(plain).toList();
+      if (plainRows.length < 2) throw const DeckboxException('t', 'needs two plain single-copy rows');
+      // A row whose every copy is for trade — what T4 leaves behind.
+      final allTraded = before
+          .where((r) =>
+              (int.tryParse(r['Tradelist Count'] ?? '') ?? 0) >= 1 &&
+              r['Tradelist Count'] == r['Count'] &&
+              (r['Scryfall ID'] ?? '').isNotEmpty &&
+              (r['Foil'] ?? '').isEmpty &&
+              perPrinting[r['Scryfall ID']] == 1)
+          .firstOrNull;
+      if (second && allTraded == null) throw const DeckboxException('t', 'needs a row with every copy for trade — run T1–T4 first');
+
+      // Two printings the Inventory has no row of at all.
+      final cards = CardsDatabase.instance;
+      final notOwned = <({String id, String name})>[];
+      for (final name in const ['Llanowar Elves', 'Counterspell', 'Giant Growth', 'Shock', 'Opt', 'Divination']) {
+        for (final c in await cards.printingsOf(name)) {
+          if (!owned.contains(c.id) && c.lang == 'en') {
+            notOwned.add((id: c.id, name: c.name));
+            break;
+          }
+        }
+        if (notOwned.length == 2) break;
+      }
+      if (notOwned.length < 2) throw const DeckboxException('t', 'no unowned printings found in the card cache');
+
+      String q(String v) => v.contains(RegExp(r'[",]')) ? '"${v.replaceAll('"', '""')}"' : v;
+      String csv(List<String> header, List<String> row) =>
+          [header.map(q).join(','), row.map(q).join(',')].join('\r\n');
+      const header = ['Count', 'Name', 'Condition', 'Language', 'Foil', 'Scryfall ID'];
+      List<String> ownedRow(Map<String, String> r) =>
+          ['1', r['Name']!, r['Condition'] ?? 'Near Mint', r['Language'] ?? 'English', '', r['Scryfall ID']!];
+      List<String> newRow(({String id, String name}) c) => ['1', c.name, 'Near Mint', 'English', '', c.id];
+
+      List<String> countRow(Map<String, String> r, int count, int trade) => [
+            '$count', r['Name']!, r['Condition'] ?? 'Near Mint', r['Language'] ?? 'English', '', r['Scryfall ID']!, '$trade',
+          ];
+      final withTrade = [...header, 'Tradelist Count'];
+
+      final probes = second
+          ? <(String, String, DeckboxListRef, String, String)>[
+              ('T5', 'Inventory import, Count 1 + Tradelist Count 1, row owned once, none for trade: 2 owned / 1 for trade?',
+                  inv, csv(withTrade, countRow(plainRows[0], 1, 1)), plainRows[0]['Scryfall ID']!),
+              ('T6', 'Inventory import, Count 0 + Tradelist Count 1, row owned once, none for trade: refused, or marked?',
+                  inv, csv(withTrade, countRow(plainRows[1], 0, 1)), plainRows[1]['Scryfall ID']!),
+              ('T7', 'Inventory import, Count 0 + Tradelist Count 1, row all for trade: does trade add, or replace?',
+                  inv, csv(withTrade, countRow(allTraded!, 0, 1)), allTraded['Scryfall ID']!),
+            ]
+          : <(String, String, DeckboxListRef, String, String)>[
+        ('T1', 'Inventory import, exact variant owned once: added to the row, or a second row?',
+            inv, csv(header, ownedRow(plainRows[0])), plainRows[0]['Scryfall ID']!),
+        ('T2', 'Tradelist import, card not owned: Inventory row created, with a trade count?',
+            trade, csv(header, newRow(notOwned[0])), notOwned[0].id),
+        ('T3', 'Tradelist import, exact variant owned once and none for trade: mark, add, or refuse?',
+            trade, csv(header, ownedRow(plainRows[1])), plainRows[1]['Scryfall ID']!),
+        ('T4', 'Inventory import with a Tradelist Count of 1, card not owned: does it carry?',
+            inv, csv([...header, 'Tradelist Count'], [...newRow(notOwned[1]), '1']), notOwned[1].id),
+      ];
+
+      String rowsOf(List<Map<String, String>> rows, String scry) {
+        final mine = rows.where((r) => r['Scryfall ID'] == scry).toList();
+        if (mine.isEmpty) return 'no row';
+        final each = mine.map((r) => '${r['Count']}× ${r['Condition']} ${r['Language']} '
+            'trade ${r['Tradelist Count'] ?? '-'} [${r['Printing Id']}]');
+        return '${mine.length} row(s): ${each.join('; ')}';
+      }
+
+      final lines = <String>[];
+      for (final (tag, question, target, body, scry) in probes) {
+        final invBefore = await export(inv);
+        final tradeBefore = await export(trade);
+        await client.listPage(target.setId); // as the site does — and the token
+        lines.addAll(['== $tag → ${target.name}', '  asks: $question', '  sent:', for (final l in body.split('\r\n')) '    $l']);
+        try {
+          final resp = await client.importCsv(target.setId, body, filename: '$tag.csv');
+          await _write('${stamp}_t_$tag.response.txt', resp.body, client.cookies);
+          lines.add('  → ${resp.status}: ${_plainText(resp.body, 300)}');
+        } on DeckboxException catch (e) {
+          lines.add('  → FAILED: $e');
+        }
+        final invAfter = await export(inv);
+        final tradeAfter = await export(trade);
+        lines.addAll([
+          '  Inventory  before: ${rowsOf(invBefore, scry)}',
+          '             after:  ${rowsOf(invAfter, scry)}   (${invBefore.length} → ${invAfter.length} rows)',
+          '  Tradelist  before: ${rowsOf(tradeBefore, scry)}',
+          '             after:  ${rowsOf(tradeAfter, scry)}   (${tradeBefore.length} → ${tradeAfter.length} rows)',
+          '',
+        ]);
+        if (mounted) setState(() => _output = lines.join('\n'));
+      }
+      return (lines.join('\n'), home);
+    });
+  }
+
+  /// **T8** — does an Inventory import's `Tradelist Count` **add** to a row's
+  /// trade count, or **replace** it? (T7 meant to ask, but Deckbox refuses a
+  /// count of 0.) Self-contained: T8a adds a card whose **name** has no row at
+  /// all in the Inventory — 1 owned, 1 for trade — and T8b sends the same row
+  /// again. 2 / 2 means it adds; 2 / 1 means it replaces.
+  Future<void> _tradeCountProbe() async {
+    if (!await _confirmWrite('2 one-row Inventory imports (T8a, T8b) of a card not owned')) return;
+    await _guarded('t8_probe', (client) async {
+      final stamp = _stamp();
+      final (lists, home) = await client.findLists();
+      final inv = lists.firstWhere((l) => l.kind == DeckboxListKind.inventory);
+      final trade = lists.firstWhere((l) => l.kind == DeckboxListKind.tradelist);
+      Future<List<Map<String, String>>> export(DeckboxListRef l) async =>
+          DeckboxCsv.rows((await client.exportCsv(l.setId, columns: 'Scryfall ID,Last Updated')).body);
+
+      // A card the Inventory has no row of under any printing — not in the
+      // seed, not left over from earlier probes.
+      final names = {for (final r in await export(inv)) r['Name']};
+      ({String id, String name})? pick;
+      for (final name in const ['Storm Crow', 'Grizzly Bears', 'Goblin Piker', 'Wind Drake', 'Gray Ogre', 'Scathe Zombies']) {
+        if (names.contains(name)) continue;
+        final printings = [for (final c in await CardsDatabase.instance.printingsOf(name)) if (c.lang == 'en') c];
+        if (printings.isNotEmpty) {
+          pick = (id: printings.first.id, name: name);
+          break;
+        }
+      }
+      if (pick == null) throw const DeckboxException('t8', 'every candidate card already has a row');
+
+      const body = 'Count,Name,Condition,Language,Foil,Scryfall ID,Tradelist Count';
+      final csv = '$body\r\n1,${pick.name},Near Mint,English,,${pick.id},1';
+      String rowsOf(List<Map<String, String>> rows) {
+        final mine = rows.where((r) => r['Scryfall ID'] == pick!.id).toList();
+        if (mine.isEmpty) return 'no row';
+        return '${mine.length} row(s): ${mine.map((r) => '${r['Count']} owned, ${r['Tradelist Count']} for trade').join('; ')}';
+      }
+
+      final lines = <String>['card: ${pick.name} (${pick.id}) — no row of that name before', ''];
+      for (final tag in const ['T8a', 'T8b']) {
+        await client.listPage(inv.setId);
+        lines.addAll(['== $tag → Inventory', '  sent: ${csv.replaceAll('\r\n', ' | ')}']);
+        try {
+          final resp = await client.importCsv(inv.setId, csv, filename: '$tag.csv');
+          await _write('${stamp}_t_$tag.response.txt', resp.body, client.cookies);
+          lines.add('  → ${resp.status}: ${_plainText(resp.body, 200)}');
+        } on DeckboxException catch (e) {
+          lines.add('  → FAILED: $e');
+        }
+        lines.addAll([
+          '  Inventory after: ${rowsOf(await export(inv))}',
+          '  Tradelist after: ${rowsOf(await export(trade))}',
+          '',
+        ]);
+        if (mounted) setState(() => _output = lines.join('\n'));
+      }
+      lines.add('T8b reading: 2 owned / 2 for trade = Tradelist Count ADDS; 2 / 1 = it REPLACES');
+      return (lines.join('\n'), home);
+    });
+  }
+
+  /// **T9** — one Inventory file mixing additions flagged for trade with ones
+  /// that are not: the shape a push takes when some staged additions are
+  /// flagged *Also up for trade* and some are not. Untested until now — every
+  /// earlier file had the *Tradelist Count* column on all rows or none.
+  ///
+  /// Self-contained. **Setup:** eight cards with no row of their name in the
+  /// Inventory; four imported plainly (no trade column — the tested shape),
+  /// giving four known rows owned once, none for trade. Then two mixed files,
+  /// each with an existing row flagged and unflagged, and a new card flagged
+  /// and unflagged:
+  ///
+  /// - **T9a** unflagged rows carry `0`
+  /// - **T9b** unflagged rows carry an **empty** cell
+  ///
+  /// Expected: existing flagged 2/1, existing unflagged 2/0, new flagged 1/1,
+  /// new unflagged 1/0 (owned / for trade).
+  Future<void> _mixedTradeProbe() async {
+    if (!await _confirmWrite('3 Inventory imports (T9 setup, T9a, T9b) of 8 cards not owned')) return;
+    await _guarded('t9_probe', (client) async {
+      final stamp = _stamp();
+      final (lists, home) = await client.findLists();
+      final inv = lists.firstWhere((l) => l.kind == DeckboxListKind.inventory);
+      final trade = lists.firstWhere((l) => l.kind == DeckboxListKind.tradelist);
+      Future<List<Map<String, String>>> export(DeckboxListRef l) async =>
+          DeckboxCsv.rows((await client.exportCsv(l.setId, columns: 'Scryfall ID,Last Updated')).body);
+
+      // Eight cards with no row of their name — known to start at nothing.
+      final names = {for (final r in await export(inv)) r['Name']};
+      final picks = <({String id, String name})>[];
+      for (final name in const [
+        'Grizzly Bears', 'Goblin Piker', 'Wind Drake', 'Gray Ogre', 'Scathe Zombies',
+        'Coral Eel', 'Raging Goblin', 'Hill Giant', 'Merfolk of the Pearl Trident',
+        'Fugitive Wizard', 'Horned Turtle', 'Craw Wurm', 'Feral Shadow', 'Durkwood Boars',
+        'Bog Imp', 'Pikemen', 'Ironroot Treefolk', 'Giant Octopus',
+      ]) {
+        if (names.contains(name)) continue;
+        final en = [for (final c in await CardsDatabase.instance.printingsOf(name)) if (c.lang == 'en') c];
+        if (en.isEmpty) continue;
+        picks.add((id: en.first.id, name: name));
+        if (picks.length == 8) break;
+      }
+      if (picks.length < 8) throw DeckboxException('t9', 'found only ${picks.length} of 8 cards with no row');
+
+      String q(String v) => v.contains(RegExp(r'[",]')) ? '"${v.replaceAll('"', '""')}"' : v;
+      String row(({String id, String name}) c, String? trade) =>
+          ['1', q(c.name), 'Near Mint', 'English', '', c.id, ?trade].join(',');
+      const plainHeader = 'Count,Name,Condition,Language,Foil,Scryfall ID';
+      const tradeHeader = '$plainHeader,Tradelist Count';
+
+      String state(List<Map<String, String>> rows, String id) {
+        final mine = rows.where((r) => r['Scryfall ID'] == id).toList();
+        if (mine.isEmpty) return 'no row';
+        return mine.map((r) => '${r['Count']}/${r['Tradelist Count'] ?? '-'}').join(' + ');
+      }
+
+      final lines = <String>['cards: ${picks.map((c) => c.name).join(', ')}', ''];
+      Future<void> send(String tag, DeckboxListRef target, String header, List<String> rows,
+          List<(String, ({String id, String name}), String)> expect) async {
+        final invBefore = await export(inv);
+        final tradeBefore = await export(trade);
+        final csv = [header, ...rows].join('\r\n');
+        await client.listPage(target.setId);
+        lines.addAll(['== $tag → ${target.name}', '  sent:', for (final l in csv.split('\r\n')) '    $l']);
+        try {
+          final resp = await client.importCsv(target.setId, csv, filename: '$tag.csv');
+          await _write('${stamp}_t_$tag.response.txt', resp.body, client.cookies);
+          lines.add('  → ${resp.status}: ${_plainText(resp.body, 300)}');
+        } on DeckboxException catch (e) {
+          lines.add('  → FAILED: $e');
+        }
+        final invAfter = await export(inv);
+        final tradeAfter = await export(trade);
+        lines.add('  owned/for trade — Inventory before → after | Tradelist after | expected');
+        for (final (what, c, expected) in expect) {
+          final got = state(invAfter, c.id);
+          lines.add('  ${got == expected ? 'OK ' : '!! '} $what ${c.name}: '
+              '${state(invBefore, c.id)} → $got | ${state(tradeAfter, c.id)} | $expected');
+        }
+        lines.add('  (Inventory ${invBefore.length} → ${invAfter.length} rows, '
+            'Tradelist ${tradeBefore.length} → ${tradeAfter.length})');
+        lines.add('');
+        if (mounted) setState(() => _output = lines.join('\n'));
+      }
+
+      // Setup: four rows owned once, none for trade — the tested shape.
+      await send('T9-setup', inv, plainHeader, [for (final i in [0, 1, 4, 5]) row(picks[i], null)], [
+        for (final i in [0, 1, 4, 5]) ('setup', picks[i], '1/0'),
+      ]);
+
+      await send('T9a', inv, tradeHeader, [
+        row(picks[0], '1'), row(picks[1], '0'), row(picks[2], '1'), row(picks[3], '0'),
+      ], [
+        ('existing, flagged  ', picks[0], '2/1'),
+        ('existing, unflagged', picks[1], '2/0'),
+        ('new, flagged       ', picks[2], '1/1'),
+        ('new, unflagged     ', picks[3], '1/0'),
+      ]);
+
+      await send('T9b', inv, tradeHeader, [
+        row(picks[4], '1'), row(picks[5], ''), row(picks[6], '1'), row(picks[7], ''),
+      ], [
+        ('existing, flagged  ', picks[4], '2/1'),
+        ('existing, unflagged', picks[5], '2/0'),
+        ('new, flagged       ', picks[6], '1/1'),
+        ('new, unflagged     ', picks[7], '1/0'),
+      ]);
+
+      lines.add('Reading: every line OK in T9a → one file with 0 works; in T9b → one file with empty cells works.');
+      return (lines.join('\n'), home);
+    });
+  }
+
+  /// **E1–E7** — Deckbox's own row edit, `update_single` (mirror_editing.md).
+  /// The counts are always sent back as the panel read them: amounts stay with
+  /// staging.
+  ///
+  /// Self-contained. **Setup:** one card with no row of its name, imported in
+  /// two printings — **A** 3 owned / 1 for trade, **B** 1 / 1. Then, on A:
+  ///
+  /// - **E1** open both panels: ids, values, the edition list
+  /// - **E2** condition → Good (LP), language → German
+  /// - **E5** flags: signed on, then foil on beside it, then both off
+  /// - **E3** a printing not owned
+  /// - **E4** into B's exact variant (B's printing, NM, English, no flags) —
+  ///   the merge: which row survives, do both counts add
+  /// - **E7** an edition id of **another** card — what a refusal looks like
+  ///
+  /// After each save: the reply, both rows in the export, and the row's panel
+  /// opened again **by its old id** — the id kept or not.
+  Future<void> _editProbes() async {
+    if (!await _confirmWrite('E: 1 setup import (2 rows of a card not owned), then 7 row saves on them')) return;
+    await _guarded('e_probe', (client) async {
+      final stamp = _stamp();
+      final (lists, home) = await client.findLists();
+      final inv = lists.firstWhere((l) => l.kind == DeckboxListKind.inventory);
+      final trade = lists.firstWhere((l) => l.kind == DeckboxListKind.tradelist);
+      Future<List<Map<String, String>>> export(DeckboxListRef l) async =>
+          DeckboxCsv.rows((await client.exportCsv(l.setId, columns: 'Scryfall ID,Last Updated')).body);
+
+      // A card with no row of its name, in two plain printings — oldest
+      // first, so neither is too new for Deckbox.
+      final before = await export(inv);
+      final names = {for (final r in before) r['Name']};
+      ({String name, String a, String b})? pick;
+      for (final name in const [
+        'Shock', 'Giant Growth', 'Naturalize', 'Duress', 'Cancel', 'Unsummon',
+        'Terror', 'Disfigure', 'Mind Rot', 'Negate', 'Plummet', 'Essence Scatter',
+      ]) {
+        if (names.contains(name)) continue;
+        final plain = [
+          for (final c in (await CardsDatabase.instance.printingsOf(name)).reversed)
+            if (c.lang == 'en' && c.setCode.length == 3 && RegExp(r'^\d+$').hasMatch(c.collectorNumber)) c,
+        ];
+        final second = plain.skip(1).where((c) => c.setCode != plain.first.setCode).firstOrNull;
+        if (second != null) {
+          pick = (name: name, a: plain.first.id, b: second.id);
+          break;
+        }
+      }
+      if (pick == null) throw const DeckboxException('e', 'every candidate card already has a row');
+      final card = pick;
+
+      final lines = <String>['card: ${card.name} — A ${card.a}, B ${card.b}', ''];
+      void show() {
+        if (mounted) setState(() => _output = lines.join('\n'));
+      }
+
+      String state(List<Map<String, String>> rows) {
+        final mine = rows.where((r) => r['Name'] == card.name).toList();
+        if (mine.isEmpty) return 'no row';
+        return mine
+            .map((r) => '${r['Edition Code']} #${r['Card Number']} ${r['Count']}/${r['Tradelist Count'] ?? '-'} '
+                '${r['Condition']} ${r['Language']}${(r['Foil'] ?? '').isEmpty ? '' : ' foil'}'
+                '${(r['Signed'] ?? '').isEmpty ? '' : ' signed'}')
+            .join('  +  ');
+      }
+
+      String describe(DeckboxRowPanel p) => 'row ${p.rowId} · card ${p.cardId} · set ${p.setId} · '
+          '${p.count}/${p.tradeCount ?? '-'} · ${p.edition ?? 'edition ${p.editionId}'} · '
+          'cond ${p.conditionId} · lang ${p.languageId} · flags [${p.flags.join(',')}] · tags [${p.tagIds ?? '-'}]';
+
+      Future<DeckboxRowPanel?> panel(String rowId, String tag) async {
+        final page = await client.rowPanel(rowId, viewingSetId: inv.setId);
+        await _write('${stamp}_e_${tag}_panel_$rowId.html', page.body, client.cookies);
+        try {
+          final p = DeckboxRowPanel.parse(page.body);
+          lines.add('  panel $rowId: ${describe(p)}');
+          return p;
+        } on FormatException catch (e) {
+          lines.add('  panel $rowId: ${page.status}, unreadable — ${e.message}: ${_plainText(page.body, 160)}');
+          return null;
+        }
+      }
+
+      Future<DeckboxRowPanel?> save(String tag, String what, DeckboxRowPanel p, String data,
+          {List<String> reopen = const []}) async {
+        lines.addAll(['== $tag — $what', '  sent: $data']);
+        try {
+          final reply = await client.saveRow(setId: p.setId, data: data, viewingSetId: inv.setId);
+          await _write('${stamp}_e_$tag.response.txt', reply.body, client.cookies);
+          final redrew = reply.body.contains("Element.update('show_detailed_contents'");
+          lines.add('  → ${reply.status}, ${reply.body.length} chars: '
+              '${redrew ? "Element.update('show_detailed_contents', …)" : _plainText(reply.body, 300)}');
+        } on DeckboxException catch (e) {
+          lines.add('  → FAILED: $e');
+        }
+        lines.add('  Inventory: ${state(await export(inv))}');
+        lines.add('  Tradelist: ${state(await export(trade))}');
+        DeckboxRowPanel? again;
+        for (final id in [p.rowId, ...reopen]) {
+          final r = await panel(id, tag);
+          if (id == p.rowId) again = r;
+        }
+        lines.add('');
+        show();
+        return again;
+      }
+
+      // Setup: A 3 owned / 1 for trade, B 1 / 1.
+      const header = 'Count,Name,Condition,Language,Foil,Scryfall ID,Tradelist Count';
+      final csv = [header, '3,${card.name},Near Mint,English,,${card.a},1', '1,${card.name},Near Mint,English,,${card.b},1']
+          .join('\r\n');
+      await client.listPage(inv.setId);
+      final reply = await client.importCsv(inv.setId, csv, filename: 'E-setup.csv');
+      await _write('${stamp}_e_setup.response.txt', reply.body, client.cookies);
+      final setup = await export(inv);
+      lines.addAll(['== setup', '  Inventory: ${state(setup)}', '']);
+      int indexOf(String id) => setup.indexWhere((r) => r['Scryfall ID'] == id);
+      final (ia, ib) = (indexOf(card.a), indexOf(card.b));
+      if (ia < 0 || ib < 0) throw DeckboxException('e', 'setup did not land: ${_plainText(reply.body, 200)}');
+      final ids = await client.locateRows(inv, setup, [ia, ib]);
+      final (rowA, rowB) = (ids[ia]!, ids[ib]!);
+      show();
+
+      lines.add('== E1 — open both panels');
+      var a = await panel(rowA, 'E1');
+      final b = await panel(rowB, 'E1');
+      if (a == null || b == null) return (lines.join('\n'), home);
+      lines.add('  editions of ${card.name}: ${a.editions.length}');
+      for (final e in a.editions.take(12)) {
+        lines.add('    ${e.id}: $e');
+      }
+      lines.add('');
+      show();
+
+      a = await save('E2', 'condition → Good (LP), language → German', a, a.saveData(conditionId: 3, languageId: 2));
+      if (a == null) return (lines.join('\n'), home);
+      a = await save('E5a', 'signed on', a, a.saveData(flags: [...a.flags, 'is_signed']));
+      if (a == null) return (lines.join('\n'), home);
+      a = await save('E5b', 'foil on beside it', a, a.saveData(flags: [...a.flags, 'is_foil']));
+      if (a == null) return (lines.join('\n'), home);
+      a = await save('E5c', 'both off', a, a.saveData(flags: const []));
+      if (a == null) return (lines.join('\n'), home);
+
+      final other = a.editions.where((e) => e.id != 0 && e.id != a!.editionId && e.id != b.editionId).toList();
+      final target = other.where((e) => !e.code.contains('_') && RegExp(r'^\d+$').hasMatch(e.number)).firstOrNull ??
+          other.firstOrNull;
+      if (target == null) {
+        lines.addAll(['== E3 — skipped: no third printing in the list', '']);
+      } else {
+        a = await save('E3', 'a printing not owned: $target', a, a.saveData(editionId: target.id));
+        if (a == null) return (lines.join('\n'), home);
+      }
+
+      final merged = await save(
+        'E4',
+        "into B's variant: ${b.edition}, NM, English, no flags",
+        a,
+        a.saveData(editionId: b.editionId, conditionId: 2, languageId: 1, flags: const []),
+        reopen: [rowB],
+      );
+
+      // Another card's edition — from a row of a different name, read only.
+      final otherRow = setup.indexWhere((r) => r['Name'] != card.name && (r['Scryfall ID'] ?? '').isNotEmpty);
+      final survivor = merged ?? await panel(rowB, 'E7');
+      if (otherRow < 0 || survivor == null) {
+        lines.add('== E7 — skipped: ${otherRow < 0 ? 'no other card' : 'no row left to save'}');
+      } else {
+        final otherId = (await client.locateRows(inv, setup, [otherRow]))[otherRow]!;
+        lines.add('== E7 — the edition of ${setup[otherRow]['Name']} (row $otherId)');
+        final o = await panel(otherId, 'E7');
+        if (o != null) {
+          await save('E7', "another card's edition: ${o.edition}", survivor, survivor.saveData(editionId: o.editionId));
+        }
+      }
+
+      lines.add('Reading: E2/E3/E5 — row id kept when the panel reopens by the old id with the new values; '
+          'E4 — which id reopens, and the counts (4/2 = both add); E7 — the refusal, or what it did.');
+      return (lines.join('\n'), home);
+    });
+  }
+
+  /// **E8** — a Wishlist row's edit panel, **read only**: does it open by row
+  /// id, and does it read as an Inventory panel does (no trade count; tags?).
+  /// Nothing is saved.
+  Future<void> _wishlistPanelProbe() => _guarded('e8_wishlist_panel', (client) async {
+        final stamp = _stamp();
+        final (lists, home) = await client.findLists();
+        final wish = lists.firstWhere((l) => l.kind == DeckboxListKind.wishlist);
+        final rows = DeckboxCsv.rows((await client.exportCsv(wish.setId, columns: 'Scryfall ID,Last Updated')).body);
+        if (rows.isEmpty) throw const DeckboxException('e8', 'the Wishlist is empty — add a card to it first');
+        final lines = <String>['Wishlist: ${rows.length} rows', ''];
+
+        // The first row, and one with a printing if the first has none.
+        final picks = {0, rows.indexWhere((r) => (r['Printing Id'] ?? '').isNotEmpty)}..remove(-1);
+        await client.listPage(wish.setId);
+        final ids = await client.locateRows(wish, rows, picks);
+        for (final i in picks) {
+          final r = rows[i];
+          lines.add('== ${r['Name']} · ${r['Edition']} #${r['Card Number']} · ${r['Count']}× · '
+              '${r['Condition']} ${r['Language']} ${r['Foil']}');
+          final page = await client.rowPanel(ids[i]!, viewingSetId: wish.setId);
+          await _write('${stamp}_e8_panel_${ids[i]}.html', page.body, client.cookies);
+          try {
+            final p = DeckboxRowPanel.parse(page.body);
+            lines.addAll([
+              '  row ${p.rowId} · card ${p.cardId} · set ${p.setId} (Wishlist is ${wish.setId}) · '
+                  'count ${p.count} · trade ${p.tradeCount ?? '(none)'} · ${p.edition ?? 'edition ${p.editionId}'} · '
+                  'cond ${p.conditionId} · lang ${p.languageId} · flags [${p.flags.join(',')}] · '
+                  'tags ${p.tagIds == null ? '(none)' : '[${p.tagIds}]'} · price ${p.price ?? '(none)'}',
+              '  editions listed: ${p.editions.length}',
+              '  would send: ${p.saveData()}',
+            ]);
+          } on FormatException catch (e) {
+            lines.add('  ${page.status}, unreadable — ${e.message}: ${_plainText(page.body, 300)}');
+          }
+          lines.add('');
+        }
+        return (lines.join('\n'), home);
+      });
+
+  // ---------------------------------------------------------------------------
+  // M3 — the push engine  (WRITES)
+  // ---------------------------------------------------------------------------
+
+  /// M3 step 1: stages a few additions and removals on the test account's
+  /// Inventory through the app's own staging, and pushes them through
+  /// [DeckboxSync.push] — the one write path the app has. Deckbox's own trade
+  /// feature is never touched. One of each kind of change:
+  ///
+  /// - a whole row removed, from page 2 when there is one (the page lookup)
+  /// - a count lowered by one
+  /// - a printing already there added in *Played* (by Scryfall ID)
+  /// - a generic *Sol Ring* (by name only)
+  /// - a made-up card name, which Deckbox should refuse — so the rest are
+  ///   sent a second time
+  /// - etched outside Deckbox's etched editions, refused before upload
+  Future<void> _m3PushTest() async {
+    final account = _account;
+    if (account == null || !_guardOk) return;
+    if (!await _confirmWrite('M3: stage test changes on Inventory and push them')) return;
+
+    final lines = <String>[];
+    void show(String line) {
+      lines.add(line);
+      if (mounted) setState(() => _output = lines.join('\n'));
+    }
+
+    setState(() => _busy = true);
+    try {
+      final dao = CollectionDatabase.instance.externalDao;
+      final inv = (await dao.listsFor(account.id)).firstWhere(
+        (l) => l.kind == 'inventory',
+        orElse: () => throw const DeckboxException('m3', 'no Inventory in the lists folder'),
+      );
+      show('Pulling ${inv.name}…');
+      final pulled = await DeckboxSync.instance.pull(inv);
+      if (pulled is! Pulled) {
+        throw DeckboxException('m3', 'pull: ${pulled is PullFailed ? pulled.message : pulled.runtimeType}');
+      }
+      final list = (await dao.listById(inv.id))!;
+      final before = await dao.watchEntries(list.id).first;
+
+      final seen = <String, int>{};
+      for (final e in before) {
+        seen[e.identityKey] = (seen[e.identityKey] ?? 0) + 1;
+      }
+      bool plain(ExternalEntry e) =>
+          seen[e.identityKey] == 1 && !e.anyPrinting && e.cardId != null;
+      final remove = before.where((e) => plain(e) && e.position >= 30 && e.count == 1).firstOrNull ??
+          before.where((e) => plain(e) && e.count == 1).firstOrNull;
+      final lower = before.where((e) => plain(e) && e.count >= 2 && e != remove).firstOrNull;
+      final printing = before
+          .where((e) =>
+              plain(e) &&
+              e != remove &&
+              e != lower &&
+              e.finish == DeckboxMapping.nonfoil &&
+              e.conditionCode != 2)
+          .firstOrNull;
+      if (remove == null || lower == null || printing == null) {
+        throw const DeckboxException('m3', 'no suitable rows — import seed.csv first');
+      }
+      String row(ExternalEntry e) => '#${e.position} ${e.name} (${e.editionCode}) ×${e.count}';
+
+      final already = await dao.stagedFor(list.id);
+      if (already.isNotEmpty) show('${already.length} already staged — pushed along with the rest');
+      await dao.stageRemoval(list: list, row: remove);
+      await dao.stageRemoval(list: list, row: lower);
+      await dao.stageAddition(
+        listId: list.id,
+        name: printing.name,
+        cardId: printing.cardId,
+        cardRef: printing.cardRef,
+        anyPrinting: false,
+        finish: printing.finish,
+        languageCode: printing.languageCode,
+        conditionCode: 2,
+        setCode: printing.editionCode.toLowerCase(),
+        setName: printing.edition,
+        collectorNumber: printing.cardNumber,
+      );
+      for (final name in const ['Sol Ring', 'Homunculus Push Test']) {
+        await dao.stageAddition(
+          listId: list.id,
+          name: name,
+          cardId: null,
+          cardRef: null,
+          anyPrinting: true,
+          finish: null,
+          languageCode: null,
+          conditionCode: null,
+        );
+      }
+      await dao.stageAddition(
+        listId: list.id,
+        name: 'Etched test (never sent)',
+        cardId: 'not-a-card',
+        cardRef: null,
+        anyPrinting: false,
+        finish: DeckboxMapping.etched,
+        languageCode: 'en',
+        conditionCode: 0,
+        setCode: 'cmr',
+        setName: 'Commander Legends',
+        collectorNumber: '0',
+      );
+      show('Staged: remove ${row(remove)}; lower ${row(lower)} by 1; '
+          'add ${printing.name} (${printing.editionCode}) in Played, a generic Sol Ring, '
+          'a made-up name, a CMR etched');
+      show('');
+
+      final watch = Stopwatch()..start();
+      final report = await DeckboxSync.instance.push(list, onStep: (s) => show('  · $s'));
+      watch.stop();
+
+      final after = await dao.watchEntries(list.id).first;
+      int copies(bool Function(ExternalEntry) where) =>
+          after.where(where).fold(0, (n, e) => n + e.count);
+      int copiesBefore(bool Function(ExternalEntry) where) =>
+          before.where(where).fold(0, (n, e) => n + e.count);
+      bool isPlayed(ExternalEntry e) => e.cardId == printing.cardId && e.conditionCode == 2;
+      bool isSolRing(ExternalEntry e) => e.anyPrinting && e.name == 'Sol Ring';
+      final left = await dao.stagedFor(list.id);
+
+      show('');
+      show('in ${watch.elapsedMilliseconds} ms — removed ${report.removed}, lowered ${report.lowered}, '
+          'added ${report.added}, refused ${report.refused}, skipped ${report.skipped}');
+      show('stopped: ${report.stoppedAt ?? 'no — ran to the end'}');
+      show('');
+      show('On Deckbox now (${before.length} → ${after.length} rows):');
+      show('  removed row: ${after.any((e) => e.identityKey == remove.identityKey) ? 'STILL THERE' : 'gone'}');
+      show('  lowered row: ${lower.count} → '
+          '${after.where((e) => e.identityKey == lower.identityKey).firstOrNull?.count ?? 'GONE'}');
+      show('  ${printing.name} in Played: ${copiesBefore(isPlayed)} → ${copies(isPlayed)}');
+      show('  generic Sol Ring: ${copiesBefore(isSolRing)} → ${copies(isSolRing)}');
+      show('  made-up name: ${after.any((e) => e.name == 'Homunculus Push Test') ? 'LANDED' : 'not there'}');
+      show('');
+      show('Still staged: ${left.length}');
+      for (final s in left) {
+        show('  ${s.direction} ${s.quantity}× ${s.name}'
+            '${s.flag == null ? '' : ' [${s.flag}]'}'
+            '${s.sentAt == null ? '' : ' [sent, expecting ${s.expectedCount}]'}'
+            ' — ${s.lastError ?? 'no error'}');
+      }
+    } on DeckboxException catch (e) {
+      show('FAILED — $e');
+    } catch (e) {
+      AppLogger.w('Deckbox spike m3 failed: ${e.runtimeType}');
+      show('FAILED — ${e.runtimeType}');
+    } finally {
+      await _reload();
+      final cookies = _session?.cookies ?? const <String, String>{};
+      await _write('${_stamp()}_m3_push.txt', lines.join('\n'), cookies);
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// Local only: drops everything staged on the test account's lists, so the
+  /// next test starts clean. Sends nothing.
+  Future<void> _unstageAll() async {
+    final account = _account;
+    if (account == null) return;
+    final dao = CollectionDatabase.instance.externalDao;
+    var n = 0;
+    for (final l in await dao.listsFor(account.id)) {
+      final ids = [for (final s in await dao.stagedFor(l.id)) s.id];
+      n += ids.length;
+      await dao.unstage(ids);
+    }
+    setState(() => _output = 'Unstaged $n changes. Nothing was sent.');
+  }
+
+  // ---------------------------------------------------------------------------
   // Test-account reset  (WRITES — removes every row of one list)
   // ---------------------------------------------------------------------------
 
@@ -993,6 +1706,78 @@ class _DeckboxSpikeScreenState extends State<DeckboxSpikeScreen> {
             const SizedBox(height: 4),
             Text(
               'Needs the seeded Inventory (60+ rows). Each asks first.',
+              style: theme.textTheme.bodySmall,
+            ),
+            const Divider(height: 32),
+
+            Text('T — Tradelist probes  (writes)', style: theme.textTheme.titleSmall),
+            const SizedBox(height: 8),
+            Wrap(spacing: 8, runSpacing: 8, children: [
+              FilledButton(
+                style: FilledButton.styleFrom(backgroundColor: theme.colorScheme.error),
+                onPressed: canGuarded ? () => _tradelistProbes() : null,
+                child: const Text('T1–T4: Tradelist imports'),
+              ),
+              FilledButton(
+                style: FilledButton.styleFrom(backgroundColor: theme.colorScheme.error),
+                onPressed: canGuarded ? () => _tradelistProbes(second: true) : null,
+                child: const Text('T5–T7: trade counts by import'),
+              ),
+              FilledButton(
+                style: FilledButton.styleFrom(backgroundColor: theme.colorScheme.error),
+                onPressed: canGuarded ? _tradeCountProbe : null,
+                child: const Text('T8: does Tradelist Count add?'),
+              ),
+              FilledButton(
+                style: FilledButton.styleFrom(backgroundColor: theme.colorScheme.error),
+                onPressed: canGuarded ? _mixedTradeProbe : null,
+                child: const Text('T9: mixed trade flags in one file'),
+              ),
+            ]),
+            const SizedBox(height: 4),
+            Text(
+              'Four one-row imports into Inventory and Tradelist; records both lists before and after each.',
+              style: theme.textTheme.bodySmall,
+            ),
+            const Divider(height: 32),
+
+            Text('E — Row edits  (writes)', style: theme.textTheme.titleSmall),
+            const SizedBox(height: 8),
+            Wrap(spacing: 8, runSpacing: 8, children: [
+              FilledButton(
+                style: FilledButton.styleFrom(backgroundColor: theme.colorScheme.error),
+                onPressed: canGuarded ? _editProbes : null,
+                child: const Text('E1–E7: edit a row in place'),
+              ),
+              OutlinedButton(
+                onPressed: canGuarded ? _wishlistPanelProbe : null,
+                child: const Text('E8: Wishlist panel (read only)'),
+              ),
+            ]),
+            const SizedBox(height: 4),
+            Text(
+              'Imports one card in two printings, then saves one row seven times; counts untouched.',
+              style: theme.textTheme.bodySmall,
+            ),
+            const Divider(height: 32),
+
+            Text('M3 — Push engine  (writes)', style: theme.textTheme.titleSmall),
+            const SizedBox(height: 8),
+            Wrap(spacing: 8, runSpacing: 8, children: [
+              FilledButton(
+                style: FilledButton.styleFrom(backgroundColor: theme.colorScheme.error),
+                onPressed: canGuarded ? _m3PushTest : null,
+                child: const Text('Stage test changes + push'),
+              ),
+              TextButton(
+                onPressed: _busy || _account == null ? null : _unstageAll,
+                child: const Text('Unstage all'),
+              ),
+            ]),
+            const SizedBox(height: 4),
+            Text(
+              'Inventory, through the app\'s own push. Needs the seeded Inventory. '
+              'Unstage all sends nothing.',
               style: theme.textTheme.bodySmall,
             ),
             const Divider(height: 32),

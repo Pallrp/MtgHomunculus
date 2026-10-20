@@ -5,7 +5,7 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:camera/camera.dart';
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Card;
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:opencv_dart/opencv_dart.dart' as cv;
 import 'package:path_provider/path_provider.dart';
@@ -107,6 +107,16 @@ class ScannerOverlay extends StatefulWidget {
   /// cluster is not built at all — the scanning surface has no spare corners.
   final bool showTuningButton;
 
+  /// Narrows an ambiguous scan's candidates before Choose Version asks — to
+  /// the printings that matter where the card is going. One left: no question.
+  /// None: no question, and the best guess goes on to [onCardAdded].
+  final List<Card> Function(List<Card> candidates)? narrowCandidates;
+
+  /// Set, the scan is handed over whole — candidates and what was read —
+  /// instead of going through Choose Version and [onCardAdded]. Returns the
+  /// entry id, or -1 when nothing was added.
+  final Future<int> Function(Identification id)? onIdentified;
+
   const ScannerOverlay({
     super.key,
     required this.isActive,
@@ -117,6 +127,8 @@ class ScannerOverlay extends StatefulWidget {
     this.onDetectionChanged,
     this.onIdle,
     this.onDuplicate,
+    this.narrowCandidates,
+    this.onIdentified,
   });
 
   @override
@@ -128,7 +140,8 @@ class ScannerOverlayState extends State<ScannerOverlay> {
   CameraController?  _controller;
   CameraDescription? _camera;
   bool               _cameraReady  = false;
-  PermissionStatus   _cameraStatus = PermissionStatus.denied;
+  /// Null until the camera is first wanted — see [_initCamera].
+  PermissionStatus?  _cameraStatus;
 
   // ── Live mode ─────────────────────────────────────────────────────────────
   CameraImage?           _lastFrame;   // most recent raw YUV frame from stream
@@ -246,18 +259,32 @@ class ScannerOverlayState extends State<ScannerOverlay> {
     DetectorParams.loadCurrent().then((p) {
       if (mounted) setState(() => _params = p);
     });
-    _initCamera();
+    if (widget.isActive) _initCamera();
   }
 
+  bool _initStarted = false;
+
+  /// **Started the first time the camera is wanted**, not when the overlay is
+  /// built (M3 step 4, 2026-10-18). A list opens on its cards, camera off — and
+  /// a move opens its destination *in place of* its source, so for a moment
+  /// two scanners exist. Android's camera plugin keeps one camera's state: a
+  /// new one set up while the old is still being torn down made the old one's
+  /// `dispose` fail. Waiting for first use means the old screen is long gone.
   Future<void> _initCamera() async {
+    if (_initStarted) return;
+    _initStarted = true;
+
     // Permission was already requested by ListingHomeScreen (sub-app entry).
-    _cameraStatus = await Permission.camera.status;
-    if (!_cameraStatus.isGranted) {
+    final status = await Permission.camera.status;
+    _cameraStatus = status;
+    if (!status.isGranted) {
       if (mounted) setState(() {});
       return;
     }
 
     final cameras = await availableCameras();
+    // Closed while waiting: a controller made now would never be disposed.
+    if (!mounted) return;
     if (cameras.isEmpty) {
       AppLogger.w('ScannerOverlay: no cameras found');
       if (mounted) setState(() {});
@@ -291,7 +318,10 @@ class ScannerOverlayState extends State<ScannerOverlay> {
       return;
     }
 
-    if (!mounted) return;
+    if (!mounted) {
+      _disposeController();
+      return;
+    }
     setState(() => _cameraReady = true);
     _applyActive();
   }
@@ -299,8 +329,23 @@ class ScannerOverlayState extends State<ScannerOverlay> {
   @override
   void didUpdateWidget(ScannerOverlay oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (widget.isActive && !_initStarted) {
+      _initCamera();
+      return;
+    }
     if (!_cameraReady || oldWidget.isActive == widget.isActive) return;
     _applyActive();
+  }
+
+  /// The overlay is going — a camera that fails to let go is logged, not
+  /// thrown: an uncaught error here stopped the app under the debugger.
+  void _disposeController() {
+    final c = _controller;
+    _controller = null;
+    if (c == null) return;
+    unawaited(c.dispose().then((_) {}, onError: (Object e, StackTrace st) {
+      AppLogger.w('ScannerOverlay: camera dispose failed', error: e, stackTrace: st);
+    }));
   }
 
   /// Camera calls in flight, one after another — a quick drag up and down
@@ -335,7 +380,7 @@ class ScannerOverlayState extends State<ScannerOverlay> {
     _recognizer?.close();
     _identifier?.dispose();
     _stopStream();
-    _controller?.dispose();
+    _disposeController();
     super.dispose();
   }
 
@@ -368,6 +413,12 @@ class ScannerOverlayState extends State<ScannerOverlay> {
 
     if (_controller == null || !_cameraReady) return;
     if (_controller!.value.isStreamingImages) return; // guard: already streaming
+    // The idle clock counts from the camera starting, not from whenever it
+    // last stopped (2026-10-18): a list opens camera-off, and a clock left
+    // running while the user browsed fired the auto-expand on the first
+    // frame — the sheet sprang back up as it was lowered.
+    _idleFired = false;
+    _lastDetectionAt = DateTime.now();
     _canProcess = true;
     _controller!.startImageStream((CameraImage frame) async {
       if (!_canProcess || !mounted) return;
@@ -715,6 +766,8 @@ class ScannerOverlayState extends State<ScannerOverlay> {
         identifier:  _identifier!,
         db:          db,
         onCardAdded: widget.onCardAdded,
+        narrow:      widget.narrowCandidates,
+        onIdentified: widget.onIdentified,
         onAmbiguous: (candidates) async {
           if (!mounted) return null;
           setState(() {
@@ -795,7 +848,7 @@ class ScannerOverlayState extends State<ScannerOverlay> {
 
   @override
   Widget build(BuildContext context) {
-    if (!_cameraStatus.isGranted) return _buildPermissionDenied(context);
+    if (_cameraStatus case final s? when !s.isGranted) return _buildPermissionDenied(context);
     if (!_cameraReady)            return _buildLoading();
 
     return Stack(

@@ -37,6 +37,8 @@ class ScanPipeline {
     required void Function(int index, ScanResult result) onResult,
     Future<int> Function(ScryfallCard card)? onCardAdded,
     Future<Card?> Function(List<Card> candidates)? onAmbiguous,
+    List<Card> Function(List<Card> candidates)? narrow,
+    Future<int> Function(Identification id)? onIdentified,
     DuplicateGuard? guard,
   }) async {
     for (var i = 0; i < borders.length; i++) {
@@ -47,6 +49,8 @@ class ScanPipeline {
         db: db,
         onCardAdded: onCardAdded,
         onAmbiguous: onAmbiguous,
+        narrow: narrow,
+        onIdentified: onIdentified,
         guard: guard,
       ));
     }
@@ -61,6 +65,8 @@ class ScanPipeline {
     required CardsDatabase db,
     required Future<int> Function(ScryfallCard)? onCardAdded,
     required Future<Card?> Function(List<Card>)? onAmbiguous,
+    required List<Card> Function(List<Card>)? narrow,
+    required Future<int> Function(Identification)? onIdentified,
     required DuplicateGuard? guard,
   }) async {
     final id = await identifier.identify(frame, border);
@@ -88,15 +94,41 @@ class ScanPipeline {
       return DuplicateResult(border, await toScryfallCard(db, best));
     }
 
+    // **A host that resolves the scan itself** gets all of it — every
+    // candidate and what was read off the card — and asks its own question,
+    // if any. Choose Version does not open. A Deckbox list removing cards is
+    // one: its choice is between its own rows, not printings.
+    if (onIdentified != null) {
+      guard?.remember(ScanFingerprint.of(id, best));
+      var entryId = 0;
+      try {
+        entryId = await onIdentified(id);
+      } catch (e, st) {
+        AppLogger.w('ScanPipeline: onIdentified failed for "${best.name}"', error: e, stackTrace: st);
+      }
+      return MatchedResult(border, await toScryfallCard(db, best), entryId);
+    }
+
     // Ambiguity is structural, not a failure: reprints hash identically, and a
     // name alone cannot determine a printing. Ask rather than guess — a silently
     // wrong printing is hard to notice and costs more to correct the longer a
     // session runs.
-    if (id.isAmbiguous) {
+    //
+    // **Only among what matters to the host.** A Deckbox Wishlist adding any
+    // printing drops the printing anyway, so it narrows a question about
+    // printings of one card to none. One left: no question.
+    var candidates = id.candidates;
+    if (id.isAmbiguous && narrow != null) {
+      final narrowed = narrow(candidates);
+      AppLogger.d('ScanPipeline: narrowed ${candidates.length} → ${narrowed.length}');
+      if (narrowed.length == 1) best = narrowed.single;
+      candidates = narrowed.length > 1 ? narrowed : [best];
+    }
+    if (candidates.length > 1) {
       AppLogger.d('ScanPipeline: ambiguous — '
-          '${id.candidates.map((c) => "${c.name} ${c.setCode}/${c.collectorNumber}").join(", ")}');
+          '${candidates.map((c) => "${c.name} ${c.setCode}/${c.collectorNumber}").join(", ")}');
       if (onAmbiguous != null) {
-        final picked = await onAmbiguous(id.candidates);
+        final picked = await onAmbiguous(candidates);
         if (picked == null) {
           // Skipped, and the slot is deliberately left empty. Arming it here
           // would lock the card out until something else was scanned, when the

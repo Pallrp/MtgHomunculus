@@ -1,0 +1,3 @@
+﻿__.hide('#loading_import_list');
+
+  window.location.reload();

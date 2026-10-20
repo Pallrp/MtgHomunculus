@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Card;
 
 import '../../../core/logging/app_logger.dart';
 import '../data/cards_database.dart';
@@ -11,7 +11,9 @@ import '../models/scryfall_card.dart';
 import '../widgets/card_picker.dart';
 import '../widgets/listing_sheet.dart';
 import '../services/csv_exporter.dart';
+import '../external/copy_match.dart' show CardLine;
 import 'card_detail_screen.dart';
+import 'move_cards_flow.dart';
 import '../widgets/scanner_overlay.dart'
     show ScannerOverlay, ScannerOverlayState;
 
@@ -226,34 +228,67 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
 
   Future<void> _deleteCard(int entryId) => _db.removeEntry(entryId);
 
-  /// The scanner never saw it — the picker's full-screen scope.
-  Future<void> _manualAdd() async {
-    final picked = await CardPicker.showScreen(context, db: _cards);
-    if (picked == null || !mounted) return;
-    final set = await (_cards.select(_cards.sets)
-          ..where((x) => x.code.equals(picked.card.setCode)))
-        .getSingleOrNull();
+  /// The scanner never saw it — the picker's full-screen scope. Its tile
+  /// steppers write straight into this list, on the scan defaults, as a scan
+  /// would land.
+  Future<void> _manualAdd() => CardPicker.showScreen(
+        context,
+        db: _cards,
+        sink: PickerSink(
+          count: (card, _) => _entries
+              .where((e) => _isDefaultOf(e, card))
+              .fold(0, (n, e) => n + e.quantity),
+          bump: _bumpFromPicker,
+        ),
+      );
+
+  /// Whether [e] is [card] in the scan defaults — the row a + lands on.
+  bool _isDefaultOf(Entry e, Card card) {
     final d = ScanDefaults.current;
-    await _db.addCard(
-      listId: widget.listId,
-      cardId: picked.card.id,
-      name: picked.card.name,
-      setCode: picked.card.setCode,
-      setName: set?.name ?? picked.card.setCode.toUpperCase(),
-      collectorNumber: picked.card.collectorNumber,
-      finish: d.finishFor(picked.card.finishes),
-      language: d.language,
-      condition: d.condition,
-      quantity: picked.quantity < 1 ? 1 : picked.quantity,
-    );
+    return e.cardId == card.id &&
+        e.finish == d.finishFor(card.finishes) &&
+        e.language == d.language &&
+        e.condition == d.condition;
   }
 
-  /// Cut or copy the selection into another list.
+  Future<int> _bumpFromPicker(Card card, bool _, int delta) async {
+    if (delta > 0) {
+      final set = await (_cards.select(_cards.sets)
+            ..where((x) => x.code.equals(card.setCode)))
+          .getSingleOrNull();
+      final d = ScanDefaults.current;
+      final id = await _db.addCard(
+        listId: widget.listId,
+        cardId: card.id,
+        name: card.name,
+        setCode: card.setCode,
+        setName: set?.name ?? card.setCode.toUpperCase(),
+        collectorNumber: card.collectorNumber,
+        finish: d.finishFor(card.finishes),
+        language: d.language,
+        condition: d.condition,
+      );
+      return (await _db.entryById(id))?.quantity ?? 0;
+    }
+    final row = (await _db.entriesIn(widget.listId))
+        .where((e) => _isDefaultOf(e, card))
+        .firstOrNull;
+    if (row == null) return 0;
+    await _db.setQuantity(row.id, row.quantity - 1);
+    return row.quantity - 1;
+  }
+
+  /// Cut or copy the selection — into another app list, a new one, or a
+  /// Deckbox list (M3 step 4).
   Future<void> _moveTo(Set<int> ids, bool move) async {
-    final target = await _pickList(exclude: widget.listId);
-    if (target == null) return;
-    await (move ? _db.cutTo(ids, target) : _db.copyTo(ids, target));
-    if (mounted) setState(() => _selected = const {});
+    final moved = await MoveCardsFlow.run(
+      context,
+      lines: [for (final e in _entries) if (ids.contains(e.id)) CardLine.fromEntry(e)],
+      cut: move,
+      sourceName: _list?.name ?? 'this list',
+      fromAppList: widget.listId,
+    );
+    if (moved && mounted) setState(() => _selected = const {});
   }
 
   Future<void> _deleteSelected(Set<int> ids) async {
@@ -261,27 +296,6 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
       await _db.removeEntry(id);
     }
     if (mounted) setState(() => _selected = const {});
-  }
-
-  /// Destination picker — what the trailing preposition in "Cut to" promises.
-  Future<int?> _pickList({required int exclude}) async {
-    final lists = (await _db.allLists()).where((l) => l.id != exclude).toList();
-    if (!mounted || lists.isEmpty) return null;
-    return showModalBottomSheet<int>(
-      context: context,
-      builder: (sheetContext) => SafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          children: [
-            for (final l in lists)
-              ListTile(
-                title: Text(l.name),
-                onTap: () => Navigator.of(sheetContext).pop(l.id),
-              ),
-          ],
-        ),
-      ),
-    );
   }
 
   /// A discarded frame reaches the sheet as a pulse on the row it concerns.

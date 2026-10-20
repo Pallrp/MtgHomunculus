@@ -4,6 +4,7 @@ import '../data/cards_database.dart';
 import '../data/collection_database.dart';
 import '../models/scryfall_card.dart';
 import '../widgets/card_picker.dart';
+import '../widgets/variant_controls.dart';
 import '../widgets/variant_editor.dart';
 
 /// One entry, editable.
@@ -261,7 +262,7 @@ class _CardDetailScreenState extends State<CardDetailScreen> {
                         ),
                       ),
                     const SizedBox(height: 16),
-                    _QuantityRow(
+                    QuantityRow(
                       quantity: entry.quantity,
                       onChanged: _setQuantity,
                     ),
@@ -272,21 +273,21 @@ class _CardDetailScreenState extends State<CardDetailScreen> {
           ),
           const SizedBox(height: 20),
 
-          _FinishControl(
+          FinishControl(
             value: entry.finish,
             available: _printing?.finishes,
             onChanged: (v) =>
-                _apply(() => widget.collection.updateEntry(_id, finish: v)),
+                _apply(() => widget.collection.updateEntry(_id, finish: v!)),
           ),
-          _LanguageControl(
+          LanguageControl(
             value: entry.language,
             onChanged: (v) =>
-                _apply(() => widget.collection.updateEntry(_id, language: v)),
+                _apply(() => widget.collection.updateEntry(_id, language: v!)),
           ),
-          _ConditionControl(
+          ConditionControl(
             value: entry.condition,
             onChanged: (v) =>
-                _apply(() => widget.collection.updateEntry(_id, condition: v)),
+                _apply(() => widget.collection.updateEntry(_id, condition: v!)),
           ),
 
           const SizedBox(height: 24),
@@ -315,149 +316,4 @@ class _CardDetailScreenState extends State<CardDetailScreen> {
       ),
     );
   }
-}
-
-// ---------------------------------------------------------------------------
-
-class _QuantityRow extends StatelessWidget {
-  final int quantity;
-  final void Function(int) onChanged;
-
-  const _QuantityRow({required this.quantity, required this.onChanged});
-
-  @override
-  Widget build(BuildContext context) => Row(
-        children: [
-          Text('Qty', style: Theme.of(context).textTheme.labelLarge),
-          const Spacer(),
-          IconButton(
-            icon: Icon(quantity <= 1
-                ? Icons.delete_outline_rounded
-                : Icons.remove_rounded),
-            onPressed: () => onChanged(quantity - 1),
-            tooltip: quantity <= 1 ? 'Remove from list' : 'One fewer',
-          ),
-          Text('$quantity', style: Theme.of(context).textTheme.titleMedium),
-          IconButton(
-            icon: const Icon(Icons.add_rounded),
-            onPressed: () => onChanged(quantity + 1),
-            tooltip: 'One more',
-          ),
-        ],
-      );
-}
-
-class _Labelled extends StatelessWidget {
-  final String label;
-  final Widget child;
-  const _Labelled({required this.label, required this.child});
-
-  @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        child: Row(
-          children: [
-            SizedBox(
-              width: 76,
-              child: Text(label, style: Theme.of(context).textTheme.labelLarge),
-            ),
-            Expanded(child: Align(alignment: Alignment.centerRight, child: child)),
-          ],
-        ),
-      );
-}
-
-/// Finish is not a boolean.
-///
-/// Scryfall documents `finishes` as an array of **foil**, **nonfoil** and
-/// **etched** — three values, not two. The control is built from what the
-/// printing actually reports, and **a printing with one finish shows no control
-/// at all**: offering a choice that does not exist invites an entry describing a
-/// card nobody ever made.
-///
-/// (`glossy` is a promo *type*, not a finish; those cards report `[foil]`.)
-class _FinishControl extends StatelessWidget {
-  final int value;
-  final int? available;
-  final void Function(int) onChanged;
-
-  const _FinishControl({
-    required this.value,
-    required this.available,
-    required this.onChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    // Unknown means the card cache is gone; fall back to the three so the entry
-    // stays editable rather than freezing on whatever it holds.
-    final mask = available ?? (Finish.nonfoil | Finish.foil | Finish.etched);
-    final options = [
-      for (final f in Finish.all)
-        if (mask & f != 0) f,
-    ];
-    if (options.length < 2) return const SizedBox.shrink();
-
-    return _Labelled(
-      label: 'Finish',
-      child: SegmentedButton<int>(
-        showSelectedIcon: false,
-        style: const ButtonStyle(visualDensity: VisualDensity.compact),
-        segments: [
-          for (final f in options)
-            ButtonSegment(value: f, label: Text(Finish.label(f))),
-        ],
-        selected: {options.contains(value) ? value : options.first},
-        onSelectionChanged: (s) => onChanged(s.first),
-      ),
-    );
-  }
-}
-
-class _LanguageControl extends StatelessWidget {
-  final String value;
-  final void Function(String) onChanged;
-
-  const _LanguageControl({required this.value, required this.onChanged});
-
-  /// The languages Scryfall prints cards in.
-  static const languages = [
-    'en', 'es', 'fr', 'de', 'it', 'pt', 'ja', 'ko', 'ru', 'zhs', 'zht',
-    'he', 'la', 'grc', 'ar', 'sa', 'ph',
-  ];
-
-  @override
-  Widget build(BuildContext context) => _Labelled(
-        label: 'Language',
-        child: DropdownButton<String>(
-          value: languages.contains(value) ? value : 'en',
-          underline: const SizedBox.shrink(),
-          items: [
-            for (final l in languages)
-              DropdownMenuItem(value: l, child: Text(l.toUpperCase())),
-          ],
-          onChanged: (v) => v == null ? null : onChanged(v),
-        ),
-      );
-}
-
-class _ConditionControl extends StatelessWidget {
-  final int value;
-  final void Function(int) onChanged;
-
-  const _ConditionControl({required this.value, required this.onChanged});
-
-  @override
-  Widget build(BuildContext context) => _Labelled(
-        label: 'Condition',
-        child: DropdownButton<int>(
-          value: value,
-          underline: const SizedBox.shrink(),
-          items: [
-            for (final c in Condition.all)
-              DropdownMenuItem(value: c, child: Text(Condition.label(c))),
-          ],
-          onChanged: (v) => v == null ? null : onChanged(v),
-        ),
-      );
 }

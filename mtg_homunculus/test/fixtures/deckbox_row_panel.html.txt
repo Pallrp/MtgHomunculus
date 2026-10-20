@@ -1,0 +1,87 @@
+<div id="panel_container" class="_menu_2" style="z-index: 15; width: 500px; left: 624px; top: 324px;"><div id="details_row_0" class="details_row" data-index="0" data-card-id="22899" data-card-set-id="464146194" data-set-id="3927970" data-render-context-action="edit_this_row" data-render-context-page="">
+  <input type="hidden" name="_pes_card_set_id" id="_pes_card_set_id" value="">
+  <input id="_pes_count" name="_pes_count" type="text" autocomplete="off" class="card_count" onfocus="this.select()" value="4">
+        <input id="_pes_trade_count" name="_pes_trade_count" type="text" autocomplete="off" class="card_count" onfocus="this.select()" data-title="Tradelist Count" value="4">
+
+    <div class="btn btn-slim notxt">
+    <span id="_button_edition0" class="j_ellipsis" style="max-width: 15em;"><div class="esym_svg"><svg class="esym_stx  R" data-title="Strixhaven: School of Mages (Card #7)"><use href="/assets/sprite-70052bb0edbdf5d4891f434cefad0d6926cb04e665dc60eb0c0f2da77a675a02.svg#esym_stx"></use></svg></div><img src="https://s.deckbox.org/images/icon_spacer.gif" class="sprite s_picture" data-tt="2114205"></span><span class="caret"></span>
+<input type="hidden" id="undefined" name="details[0][card_edition_id]" value="55902"></div>
+<script type="text/javascript">
+    Dropdown.all['details[0][card_edition_id]'] = new Dropdown([["<div class='esym_svg'><svg class='esym_stx sprite_off C' data-title=\"[Unspecified Edition]\"><use href='/assets/sprite-70052bb0edbdf5d4891f434cefad0d6926cb04e665dc60eb0c0f2da77a675a02.svg#esym_stx'/></svg></div><img src='https://s.deckbox.org/images/icon_spacer.gif' class='sprite s_picture' data-tt='2114205'>",0],["<div class='esym_svg'><svg class='esym_stx  R' data-title=\"Strixhaven: School of Mages (Card #7)\"><use href='/assets/sprite-70052bb0edbdf5d4891f434cefad0d6926cb04e665dc60eb0c0f2da77a675a02.svg#esym_stx'/></svg></div><img src='https://s.deckbox.org/images/icon_spacer.gif' class='sprite s_picture' data-tt='2114205'><div class='mtg_edition_name'>Strixhaven: School of Mages <code>(STX #7)</code></div>",55902,609],["<div class='esym_svg'><svg class='esym_stx  R' data-title=\"Strixhaven: School of Mages (Card #287)\"><use href='/assets/sprite-70052bb0edbdf5d4891f434cefad0d6926cb04e665dc60eb0c0f2da77a675a02.svg#esym_stx'/></svg></div><img src='https://s.deckbox.org/images/icon_spacer.gif' class='sprite s_picture' data-tt='2114485'><div class='mtg_edition_name'>Strixhaven: School of Mages <code>(STX #287)</code></div>",56182,609],["<div class='esym_svg'><svg class='esym_stx  R' data-title=\"Promo Pack: Strixhaven: School of Mages (Card #7)\"><use href='/assets/sprite-70052bb0edbdf5d4891f434cefad0d6926cb04e665dc60eb0c0f2da77a675a02.svg#esym_stx'/></svg><svg class='sis_star ' ><use href='/assets/sprite-70052bb0edbdf5d4891f434cefad0d6926cb04e665dc60eb0c0f2da77a675a02.svg#sis_star'/></svg></div><img src='https://s.deckbox.org/images/icon_spacer.gif' class='sprite s_picture' data-tt='2115990'><div class='mtg_edition_name'>Promo Pack: Strixhaven: School of Mages <code>(PP_STX #7)</code></div>",57857,621],["<div class='esym_svg'><svg class='esym_stx  R' data-title=\"Prerelease Events: Strixhaven: School of Mages (Card #7)\"><use href='/assets/sprite-70052bb0edbdf5d4891f434cefad0d6926cb04e665dc60eb0c0f2da77a675a02.svg#esym_stx'/></svg><svg class='sis_star ' ><use href='/assets/sprite-70052bb0edbdf5d4891f434cefad0d6926cb04e665dc60eb0c0f2da77a675a02.svg#sis_star'/></svg></div><img src='https://s.deckbox.org/images/icon_spacer.gif' class='sprite s_picture' data-tt='2114588'><div class='mtg_edition_name'>Prerelease Events: Strixhaven: School of Mages <code>(PTC_27 #7)</code></div>",56285,611]], {
+      name: 'details[0][card_edition_id]',
+      filterable: true,
+      initial: [55902],
+      buttonText: Tcg.utils.extractEditionSymbol,
+      buttonId: '_button_edition0'
+    });
+</script>
+
+<div class="btn btn-slim notxt">
+    <span id="_button_condition0" class="j_ellipsis" style="max-width: 15em;"><img src="https://s.deckbox.org/images/icon_spacer.gif" class="sprite s_star2" data-title="Near Mint"></span>
+    <span class="caret"></span>
+<input type="hidden" id="undefined" name="details[0][condition_id]" value="2"></div>
+<script type="text/javascript">
+    Dropdown.all['details[0][condition_id]'] = new Dropdown([["<img src='https://s.deckbox.org/images/icon_spacer.gif' class='sprite s_star2 sprite_off' data-title='' />",0],["<img src='https://s.deckbox.org/images/icon_spacer.gif' class='sprite s_star1' data-title='Mint' />Mint",1],["<img src='https://s.deckbox.org/images/icon_spacer.gif' class='sprite s_star2' data-title='Near Mint' />Near Mint",2],["<img src='https://s.deckbox.org/images/icon_spacer.gif' class='sprite s_star3' data-title='Good (Lightly Played)' />Good (Lightly Played)",3],["<img src='https://s.deckbox.org/images/icon_spacer.gif' class='sprite s_star4' data-title='Played' />Played",4],["<img src='https://s.deckbox.org/images/icon_spacer.gif' class='sprite s_star5' data-title='Heavily Played' />Heavily Played",5],["<img src='https://s.deckbox.org/images/icon_spacer.gif' class='sprite s_star6' data-title='Poor' />Poor",6],["<img src='https://s.deckbox.org/images/icon_spacer.gif' class='sprite s_image_edit' data-title='Proxy' />Proxy",7]], {
+      name: 'details[0][condition_id]',
+      initial: [2],
+      buttonText: Tcg.utils.extractIcons,
+      buttonId: '_button_condition0'
+    });
+  </script>
+
+<div class="btn btn-slim notxt">
+    <span id="_button_language0" class="j_ellipsis" style="max-width: 15em;"><img src="https://s.deckbox.org/images/icon_spacer_16_11.png" class="flag flag-us" data-title="English"></span>
+    <span class="caret"></span>
+<input type="hidden" id="undefined" name="details[0][language_id]" value="1"></div>
+<script type="text/javascript">
+    Dropdown.all['details[0][language_id]'] = new Dropdown([["<img src='https://s.deckbox.org/images/icon_spacer_16_11.png' class='flag flag-us sprite_off' data-title=''/>",0],["<img src='https://s.deckbox.org/images/icon_spacer_16_11.png' class='flag flag-us' data-title='English'/>English",1],["<img src='https://s.deckbox.org/images/icon_spacer_16_11.png' class='flag flag-de' data-title='German'/>German",2],["<img src='https://s.deckbox.org/images/icon_spacer_16_11.png' class='flag flag-fr' data-title='French'/>French",3],["<img src='https://s.deckbox.org/images/icon_spacer_16_11.png' class='flag flag-it' data-title='Italian'/>Italian",4],["<img src='https://s.deckbox.org/images/icon_spacer_16_11.png' class='flag flag-es' data-title='Spanish'/>Spanish",5],["<img src='https://s.deckbox.org/images/icon_spacer_16_11.png' class='flag flag-pt' data-title='Portuguese'/>Portuguese",6],["<img src='https://s.deckbox.org/images/icon_spacer_16_11.png' class='flag flag-jp' data-title='Japanese'/>Japanese",7],["<img src='https://s.deckbox.org/images/icon_spacer_16_11.png' class='flag flag-cn' data-title='Chinese'/>Chinese",8],["<img src='https://s.deckbox.org/images/icon_spacer_16_11.png' class='flag flag-ru' data-title='Russian'/>Russian",9],["<img src='https://s.deckbox.org/images/icon_spacer_16_11.png' class='flag flag-kr' data-title='Korean'/>Korean",10],["<img src='https://s.deckbox.org/images/icon_spacer_16_11.png' class='flag flag-tw' data-title='Traditional Chinese'/>Traditional Chinese",11]], {
+      name: 'details[0][language_id]',
+      initial: [1],
+      buttonText: Tcg.utils.extractIcons,
+      buttonId: '_button_language0'
+    });
+</script>
+
+<div class="btn btn-slim notxt">
+    <span id="_button_flags0" class="j_ellipsis" style="max-width: 15em;"><img src="https://s.deckbox.org/images/icon_spacer.gif" class="sprite s_flag_yellow sprite_off"></span>
+    <span class="caret"></span>
+<input type="hidden" id="undefined" name="details[0][flags]"></div>
+<script type="text/javascript">
+    Dropdown.all['details[0][flags]'] = new DropdownMulti([["<img src=\"https://s.deckbox.org/images/icon_spacer.gif\" class=\"sprite s_colors \" >Foiled","is_foil"],["<img src=\"https://s.deckbox.org/images/icon_spacer.gif\" class=\"sprite s_letter \" >Signed","is_signed"],["<img src=\"https://s.deckbox.org/images/icon_spacer.gif\" class=\"sprite s_page_white_picture \" >Artist Proof","is_proof"],["<img src=\"https://s.deckbox.org/images/icon_spacer.gif\" class=\"sprite s_palette \" >Altered Art","is_altered"],["<img src=\"https://s.deckbox.org/images/icon_spacer.gif\" class=\"sprite s_printer_error \" >Misprint","is_misprint"],["<s><img src=\"https://s.deckbox.org/images/icon_spacer.gif\" class=\"sprite s_square \" >Textless (Deprecated)</s>","is_textless"],["<s><img src=\"https://s.deckbox.org/images/icon_spacer.gif\" class=\"sprite s_rosette \" >Promo (Deprecated)</s>","is_promo"]], {
+      name: 'details[0][flags]',
+      initial: [],
+      emptyIcon: "<img src=\"https://s.deckbox.org/images/icon_spacer.gif\" class=\"sprite s_flag_yellow sprite_off\" >",
+      buttonText: Tcg.utils.extractIcons,
+      buttonId: "_button_flags0"
+    });
+</script>
+
+
+    <div class="btn btn-slim notxt">
+      <span id="_button_tags_0" class="j_ellipsis" style="max-width: 15em;"><img src="https://s.deckbox.org/images/icon_spacer.gif" class="sprite s_tag sprite_off"></span>
+      <span class="caret"></span>
+    <input type="hidden" id="_pes_tag_ids" name="_pes_tag_ids"></div>
+    <script type="text/javascript">
+        new DropdownMulti([], {
+            id: '_pes_tag_ids',
+            emptyIcon: "<img src=\"https://s.deckbox.org/images/icon_spacer.gif\" class=\"sprite s_tag sprite_off\" >",
+            initial: [],
+            buttonId: "_button_tags_0",
+            extraButton: {text: 'Manage Tags', callback: () => Tcg.utils.goWithReturnTo('/tags')},
+        });
+    </script>
+
+    <span onclick="Tcg.ui.Panel.close()">
+
+       <div id="photos_dialog_464146194" class="camera btn btn-slim">
+         <span onclick="Tcg.ui.Window.withAjaxContent('/mtg_card_photos/dialog', {parameters: {cs_id: 464146194}}, 680)">
+           <div class="sprite50 s50_camera short" data-title="Click to view or upload photos or scans of this card."></div>
+         </span>
+       </div>
+
+    </span>
+</div>
+<br>
+<button class="btn btn-primary btn-sm" type="button" onclick="PanelCardInfo.submitSingle(event)">Save</button>
+<button class="btn btn-sm" type="button" onclick="Tcg.ui.Panel.close()">Close</button>
+</div>

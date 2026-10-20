@@ -8,6 +8,7 @@ import '../models/scryfall_card.dart';
 import '../theme/picker_tokens.dart';
 import 'attribute_chips.dart';
 import 'card_thumb.dart';
+import 'sheet_parts.dart';
 
 /// What the slot under the management bar is currently showing.
 ///
@@ -200,7 +201,7 @@ class ListingSheet extends StatelessWidget {
           top: 0,
           left: 0,
           right: 0,
-          child: Center(child: _ChevronButton(open: _full, onTap: _toggle)),
+          child: Center(child: SheetChevron(open: _full, onTap: _toggle)),
         ),
       ],
     );
@@ -222,7 +223,7 @@ class ListingSheet extends StatelessWidget {
         children: [
           // Camera first, and it never changes meaning: collapse to peek and
           // restart the stream.
-          _IconBtn(
+          SheetIconBtn(
             icon: Icons.camera_alt_rounded,
             tooltip: 'Back to the camera',
             onTap: onCollapse,
@@ -251,8 +252,8 @@ class ListingSheet extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 6),
-          _IconBtn(
-            icon: Icons.swap_vert_rounded,
+          SheetIconBtn(
+            icon: Icons.search_rounded,
             tooltip: 'Sort and search this list',
             active: slotMode == SlotMode.sort,
             onTap: () => onSlotModeChanged(
@@ -260,7 +261,7 @@ class ListingSheet extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 6),
-          _IconBtn(
+          SheetIconBtn(
             icon: Icons.checklist_rounded,
             tooltip: 'Select',
             active: slotMode == SlotMode.select,
@@ -278,7 +279,7 @@ class ListingSheet extends StatelessWidget {
             },
           ),
           const SizedBox(width: 6),
-          _IconBtn(
+          SheetIconBtn(
             icon: Icons.settings_outlined,
             tooltip: 'List settings',
             onTap: () => _listSettings(context),
@@ -302,16 +303,18 @@ class ListingSheet extends StatelessWidget {
       ),
       padding: const EdgeInsets.fromLTRB(10, 7, 10, 7),
       child: switch (slotMode) {
-        SlotMode.manualAdd => _TextBtn(
+        SlotMode.manualAdd => SheetTextBtn(
             label: '+  Manual add',
             wide: true,
             onTap: onManualAdd,
           ),
         SlotMode.sort => Row(
             children: [
-              Expanded(child: _listSearchField(context)),
+              Expanded(
+                child: SheetSearchField(query: query, onChanged: onQueryChanged),
+              ),
               const SizedBox(width: 8),
-              _IconBtn(
+              SheetIconBtn(
                 icon: Icons.swap_vert_rounded,
                 tooltip: sort.label,
                 onTap: () => _pickSort(context),
@@ -320,7 +323,7 @@ class ListingSheet extends StatelessWidget {
           ),
         SlotMode.select => Row(
             children: [
-              _IconBtn(
+              SheetIconBtn(
                 icon: selected.length == entries.length
                     ? Icons.check_box_rounded
                     : Icons.check_box_outline_blank_rounded,
@@ -349,12 +352,12 @@ class ListingSheet extends StatelessWidget {
               ),
               // The trailing preposition is deliberate: both open a destination
               // picker rather than acting immediately.
-              _TextBtn(label: 'Cut to', onTap: () => onMoveTo(selected, true)),
+              SheetTextBtn(label: 'Cut to', onTap: () => onMoveTo(selected, true)),
               const SizedBox(width: 5),
-              _TextBtn(
+              SheetTextBtn(
                   label: 'Copy to', onTap: () => onMoveTo(selected, false)),
               const SizedBox(width: 5),
-              _IconBtn(
+              SheetIconBtn(
                 icon: Icons.delete_outline_rounded,
                 tooltip: 'Remove from list',
                 danger: true,
@@ -364,38 +367,6 @@ class ListingSheet extends StatelessWidget {
             ],
           ),
       },
-    );
-  }
-
-  Widget _listSearchField(BuildContext context) {
-    final t = PickerTokens.of(context);
-    return SizedBox(
-      height: 32,
-      child: TextField(
-        controller: TextEditingController(text: query)
-          ..selection = TextSelection.collapsed(offset: query.length),
-        onChanged: onQueryChanged,
-        style: PickerTokens.mono(context, size: 12, color: t.text),
-        decoration: InputDecoration(
-          isDense: true,
-          filled: true,
-          fillColor: t.surface2,
-          hintText: 'Find in this list…',
-          hintStyle: PickerTokens.mono(context, size: 12, color: t.textFaint),
-          prefixIcon: Icon(Icons.search_rounded, size: 16, color: t.textFaint),
-          prefixIconConstraints:
-              const BoxConstraints(minWidth: 30, minHeight: 30),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(7),
-            borderSide: BorderSide(color: t.line),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(7),
-            borderSide: BorderSide(color: t.accent),
-          ),
-        ),
-      ),
     );
   }
 
@@ -632,11 +603,6 @@ class _EntryRowState extends State<_EntryRow>
     // evicted rather than refreshing, which nobody will notice at this size.
     final url = ScryfallCard.imageUrlFor(e.cardId, null, size: 'small');
 
-    final meta = e.snapSetName.isEmpty
-        ? '${e.snapSetCode.toUpperCase()} · ${e.snapCollector}'
-        : '${e.snapSetCode.toUpperCase()} · ${e.snapCollector} · '
-            '${e.snapSetName}';
-
     final row = InkWell(
       onTap: widget.onTap,
       child: Container(
@@ -658,58 +624,40 @@ class _EntryRowState extends State<_EntryRow>
             if (widget.selecting)
               Padding(
                 padding: const EdgeInsets.only(right: 8),
+                // Checkboxes, not circles (M3 step 4): a circle reads as a
+                // radio — one of — where this is any number of.
                 child: Icon(
                   widget.selected
-                      ? Icons.check_circle_rounded
-                      : Icons.circle_outlined,
+                      ? Icons.check_box_rounded
+                      : Icons.check_box_outline_blank_rounded,
                   size: 20,
                   color: widget.selected ? t.accent : t.textFaint,
                 ),
               ),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(4),
-              child: SizedBox(
-                width: PickerTokens.thumbWidth,
-                height: PickerTokens.thumbHeight,
-                child: CardThumb(url: url),
-              ),
-            ),
-            const SizedBox(width: 10),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    e.snapName,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      height: 1.2,
-                      color: t.text,
-                    ),
-                  ),
-                  Text(
-                    meta,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: PickerTokens.mono(context, size: 10),
-                  ),
-                  const SizedBox(height: 3),
-                  AttributeChips(
-                    finish: e.finish,
-                    language: e.language,
-                    condition: e.condition,
-                    defaults: ScanDefaults.current,
-                  ),
-                ],
+              child: CardRowBody(
+                thumb: ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: CardThumb(url: url),
+                ),
+                name: e.snapName,
+                setLine: CardRowBody.printingLine(
+                  context,
+                  setCode: e.snapSetCode,
+                  collector: e.snapCollector,
+                  setName: e.snapSetName,
+                ),
+                chips: AttributeChips(
+                  finish: e.finish,
+                  language: e.language,
+                  condition: e.condition,
+                  defaults: ScanDefaults.current,
+                ),
               ),
             ),
             const SizedBox(width: 6),
             if (widget.peek)
-              _Stepper(quantity: e.quantity, onChanged: widget.onSetQty)
+              QtyStepper(quantity: e.quantity, onChanged: widget.onSetQty)
             else
               Text(
                 '${e.quantity}×',
@@ -746,164 +694,5 @@ class _EntryRowState extends State<_EntryRow>
         child: row,
       ),
     );
-  }
-}
-
-class _Stepper extends StatelessWidget {
-  final int quantity;
-  final void Function(int) onChanged;
-
-  const _Stepper({required this.quantity, required this.onChanged});
-
-  @override
-  Widget build(BuildContext context) {
-    final t = PickerTokens.of(context);
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _IconBtn(
-          icon:
-              quantity <= 1 ? Icons.delete_outline_rounded : Icons.remove_rounded,
-          tooltip: quantity <= 1 ? 'Remove' : 'One fewer',
-          danger: quantity <= 1,
-          onTap: () => onChanged(quantity - 1),
-        ),
-        SizedBox(
-          width: 26,
-          child: Center(
-            child: Text(
-              '$quantity',
-              style: PickerTokens.mono(
-                context,
-                size: 13,
-                weight: FontWeight.w500,
-                color: t.text,
-              ),
-            ),
-          ),
-        ),
-        _IconBtn(
-          icon: Icons.add_rounded,
-          tooltip: 'One more',
-          onTap: () => onChanged(quantity + 1),
-        ),
-      ],
-    );
-  }
-}
-
-/// The bordered square the artifact uses for every icon action.
-class _IconBtn extends StatelessWidget {
-  final IconData icon;
-  final String tooltip;
-  final bool active;
-  final bool danger;
-  final bool small;
-  final VoidCallback onTap;
-
-  const _IconBtn({
-    required this.icon,
-    required this.tooltip,
-    required this.onTap,
-    this.active = false,
-    this.danger = false,
-    this.small = false,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final t = PickerTokens.of(context);
-    final (Color fg, Color bg, Color border) = danger
-        ? (t.vermilion, Colors.transparent, t.vermilion)
-        : active
-            ? (t.ground, t.accent, t.accent)
-            : (t.text, t.surface2, t.line);
-    final size = small ? 32.0 : 38.0;
-
-    return Tooltip(
-      message: tooltip,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(9),
-        child: Container(
-          width: size,
-          height: size,
-          decoration: BoxDecoration(
-            color: bg,
-            border: Border.all(color: border),
-            borderRadius: BorderRadius.circular(9),
-          ),
-          child: Icon(icon, size: small ? 15 : 18, color: fg),
-        ),
-      ),
-    );
-  }
-}
-
-/// The circular toggle straddling the sheet's top edge.
-class _ChevronButton extends StatelessWidget {
-  final bool open;
-  final VoidCallback onTap;
-
-  const _ChevronButton({required this.open, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    final t = PickerTokens.of(context);
-    return Material(
-      color: t.surface,
-      shape: CircleBorder(side: BorderSide(color: t.line)),
-      elevation: 4,
-      child: InkWell(
-        onTap: onTap,
-        customBorder: const CircleBorder(),
-        child: SizedBox(
-          width: PickerTokens.chevron,
-          height: PickerTokens.chevron,
-          child: Icon(
-            open
-                ? Icons.keyboard_arrow_down_rounded
-                : Icons.keyboard_arrow_up_rounded,
-            size: 20,
-            color: t.text,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// An outlined accent action — "Manual add", "Cut to", "Copy to".
-class _TextBtn extends StatelessWidget {
-  final String label;
-  final bool wide;
-  final VoidCallback onTap;
-
-  const _TextBtn({required this.label, required this.onTap, this.wide = false});
-
-  @override
-  Widget build(BuildContext context) {
-    final t = PickerTokens.of(context);
-    final button = InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(PickerTokens.radiusSmall),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-        alignment: wide ? Alignment.center : null,
-        decoration: BoxDecoration(
-          border: Border.all(color: t.accent),
-          borderRadius: BorderRadius.circular(PickerTokens.radiusSmall),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-            color: t.accent,
-          ),
-        ),
-      ),
-    );
-    return wide ? SizedBox(width: double.infinity, child: button) : button;
   }
 }

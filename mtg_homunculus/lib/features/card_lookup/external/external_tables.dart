@@ -8,8 +8,8 @@ import 'package:drift/drift.dart';
 /// touch a list the user made. `provider` leaves room for another service
 /// without designing for one now.
 ///
-/// Staged changes — what the user wants to send back — arrive with M3, in a
-/// table of their own.
+/// Staged changes — what the user wants to send back — live in their own
+/// table ([StagedChanges], M3), untouched by pulls.
 
 /// One signed-in (or once signed-in) account.
 ///
@@ -150,4 +150,90 @@ class ExternalEntries extends Table {
   IntColumn get finish => integer().nullable()();
   TextColumn get languageCode => text().nullable()();
   IntColumn get conditionCode => integer().nullable()();
+}
+
+/// What the user wants Deckbox to change — **staged**, and sent only by an
+/// explicit push (M3).
+///
+/// **A pull never touches these** beyond setting [flag] on a removal that has
+/// become impossible. Each row carries everything needed to show it and to
+/// send it, so it survives its Deckbox row disappearing, and a removal points
+/// at that row by **identity** ([identityKey]) — never by an id a pull
+/// recreates or Deckbox reassigns.
+@DataClassName('StagedChange')
+class StagedChanges extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  IntColumn get listId =>
+      integer().references(ExternalLists, #id, onDelete: KeyAction.cascade)();
+
+  /// `add` or `remove`.
+  TextColumn get direction => text()();
+
+  /// Always at least 1; the direction carries the sign.
+  IntColumn get quantity => integer()();
+
+  /// One row per thing staged: a removal's [identityKey]; an addition's
+  /// printing (or card, if generic) and variant. Staging the same thing again
+  /// raises [quantity].
+  TextColumn get stageKey => text()();
+
+  // ── what the card is: both directions ──────────────────────────────────────
+
+  TextColumn get name => text()();
+
+  /// Scryfall printing id; null for a generic addition and for a removal of a
+  /// row the app could not map.
+  TextColumn get cardId => text().nullable()();
+
+  /// A printing for art and matching — the scanned one for a generic
+  /// addition. Never sent.
+  TextColumn get cardRef => text().nullable()();
+
+  /// A generic ("any printing") addition, written by name only (D9).
+  BoolColumn get anyPrinting => boolean().withDefault(const Constant(false))();
+
+  IntColumn get finish => integer().nullable()();
+  TextColumn get languageCode => text().nullable()();
+  IntColumn get conditionCode => integer().nullable()();
+
+  // Snapshot, for display and for the import's cosmetic columns.
+  TextColumn get setCode => text().withDefault(const Constant(''))();
+  TextColumn get setName => text().withDefault(const Constant(''))();
+  TextColumn get collectorNumber => text().withDefault(const Constant(''))();
+
+  /// An Inventory addition **also put up for trade** — sent with the import
+  /// as *Tradelist Count* (tradelist.md, decision 3; schema 4).
+  BoolColumn get forTrade => boolean().withDefault(const Constant(false))();
+
+  // ── removals ──────────────────────────────────────────────────────────────
+
+  /// The Deckbox row a removal is for — `ExternalEntries.identityKey`.
+  TextColumn get identityKey => text().nullable()();
+
+  /// Set by a pull when a removal can no longer be made: `gone`, `short:<n>`
+  /// (only n left), or `ambiguous` (two rows match). **A flagged removal sends
+  /// nothing**, not even the part that would fit.
+  TextColumn get flag => text().nullable()();
+
+  // ── an interrupted push ─────────────────────────────────────────────────────
+
+  /// Unix seconds, set just before the request carrying this row goes out,
+  /// with [expectedCount] — what the row's count should be once it lands. The
+  /// next push checks a fresh pull against it before sending again, so a push
+  /// cut off after sending can never send twice.
+  IntColumn get sentAt => integer().nullable()();
+  IntColumn get expectedCount => integer().nullable()();
+
+  /// Why the last push did not send this row — kept with it, shown with it.
+  TextColumn get lastError => text().nullable()();
+
+  IntColumn get stagedAt => integer()();
+
+  @override
+  List<Set<Column>> get uniqueKeys => [
+        {listId, direction, stageKey},
+      ];
+
+  @override
+  List<String> get customConstraints => ['CHECK (quantity > 0)'];
 }

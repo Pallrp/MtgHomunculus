@@ -292,6 +292,34 @@ class DeckboxClient {
         referer: '/sets/$viewingSetId',
       );
 
+  /// A row's edit panel — the site's *Edit this row*. A POST because that is
+  /// how the site loads it; it changes nothing. Read with `DeckboxRowPanel`.
+  Future<DeckboxPage> rowPanel(String rowId, {required int viewingSetId}) => post(
+        '/detailed_cards_sets/panel_edit_single',
+        {'detailed_card_set_id': rowId, 'render_context_action': 'edit_this_row'},
+        referer: '/sets/$viewingSetId',
+      );
+
+  /// Saves a row — the edit panel's **Save**. [data] is the whole row
+  /// (`DeckboxRowPanel.saveData`); [setId] is the panel's own, the
+  /// Inventory's even from its Tradelist. The reply on success is a script
+  /// that redraws the list (`Element.update('show_detailed_contents', …)`).
+  Future<DeckboxPage> saveRow({
+    required int setId,
+    required String data,
+    required int viewingSetId,
+  }) =>
+      post(
+        '/detailed_cards_sets/update_single',
+        {
+          'set_id': '$setId',
+          'data': data,
+          'render_context_action': 'edit_this_row',
+          'render_context_page': '',
+        },
+        referer: '/sets/$viewingSetId',
+      );
+
   /// Finds the row ids of export rows — **the push-time lookup**.
   ///
   /// [export] is a fresh export of [list] in [sort]; [indices] are the rows
@@ -302,12 +330,33 @@ class DeckboxClient {
   /// and the page, a **unique** full match on that page or a neighbour is
   /// accepted; two equal matches, or none, fail loudly. Each page is fetched
   /// once however many rows sit on it.
+  ///
+  /// [onProgress] hears each row found — `(found, of)` — for a push's
+  /// progress: a thousand rows is dozens of pages.
   Future<Map<int, String>> locateRows(
     DeckboxListRef list,
     List<Map<String, String>> export,
     Iterable<int> indices, {
     String sort = 'n',
+    void Function(int done, int total)? onProgress,
+  }) =>
+      _locate(list, (i) => export[i], indices, sort: sort, onProgress: onProgress);
+
+  /// One row's id, from **the mirror** rather than a fresh export — a row
+  /// edit's lookup (mirror_editing.md). [want] is the row as the export
+  /// showed it at [position]; the same page check applies, so a row changed
+  /// on Deckbox since the pull is not found.
+  Future<String> locateRow(DeckboxListRef list, int position, Map<String, String> want) async =>
+      (await _locate(list, (_) => want, [position]))[position]!;
+
+  Future<Map<int, String>> _locate(
+    DeckboxListRef list,
+    Map<String, String> Function(int index) rowAt,
+    Iterable<int> indices, {
+    String sort = 'n',
+    void Function(int done, int total)? onProgress,
   }) async {
+    final total = indices.length;
     final pages = <int, DeckboxListPage>{};
     Future<DeckboxListPage> pageAt(int p) async =>
         pages[p] ??= readListPage((await listPage(list.setId, page: p, sort: sort)).body);
@@ -315,7 +364,7 @@ class DeckboxClient {
     var size = 30;
     final found = <int, String>{};
     for (final i in indices) {
-      final want = export[i];
+      final want = rowAt(i);
       var p = i ~/ size + 1;
       var page = await pageAt(p);
       final reported = page.pageSize;
@@ -349,6 +398,7 @@ class DeckboxClient {
         );
       }
       found[i] = id;
+      onProgress?.call(found.length, total);
     }
     return found;
   }

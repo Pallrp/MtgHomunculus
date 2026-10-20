@@ -6,6 +6,7 @@ import 'package:flutter/material.dart' hide Card;
 import '../data/cards_database.dart';
 import '../models/scryfall_card.dart';
 import '../theme/picker_tokens.dart';
+import 'any_printing_chip.dart';
 import 'card_thumb.dart';
 
 /// Which question the grid is being opened to answer.
@@ -34,7 +35,30 @@ class PickerResult {
   /// than using the tile's stepper.
   final int quantity;
 
-  const PickerResult(this.card, {this.quantity = 1});
+  /// The card, not a printing — a Deckbox Wishlist's *Any printing*. [card]
+  /// is then only its representative printing: art, and matching later scans.
+  final bool anyPrinting;
+
+  const PickerResult(this.card, {this.quantity = 1, this.anyPrinting = false});
+}
+
+/// One grid tile: a printing, or — [any] — a card in any printing.
+typedef _TileItem = ({Card card, bool any});
+
+/// Where Manual Add's tile steppers write: **straight into the list** the
+/// picker was opened for (decided 2026-10-16). The count on a tile is what
+/// that list holds of it; **+** adds one, **−** takes one back, and the picker
+/// stays open for the next card.
+///
+/// Without a sink the steppers queue copies for the tap, as before.
+class PickerSink {
+  const PickerSink({required this.count, required this.bump});
+
+  /// Copies of [card] — or, `any`, of the card in any printing — in the list.
+  final int Function(Card card, bool any) count;
+
+  /// One more (`delta` 1) or one fewer (−1). Returns the new count.
+  final Future<int> Function(Card card, bool any, int delta) bump;
 }
 
 /// One grid, three scopes.
@@ -53,12 +77,43 @@ class CardPicker extends StatefulWidget {
   /// Printings already in the active list, for the in-list badge.
   final Set<String> inList;
 
+  /// A Deckbox Wishlist's *Any printing* setting (M3). Non-null shows the chip:
+  /// on, the grid has **one tile per card** and picking one adds the card in
+  /// any printing. The picker writes it back when flipped.
+  final ValueNotifier<bool>? anyPrinting;
+
+  /// [PickerScope.changeVersion] on a Wishlist row: an *Any printing* tile
+  /// first, marked current when [currentAny].
+  final bool offerAny;
+  final bool currentAny;
+
+  /// Who the picker is adding for — *PlalBulk · Wishlist* — under the title.
+  final String? subtitle;
+
+  /// In place of the scope's own title — *Remove a card*.
+  final String? title;
+
+  /// **List only** — a Deckbox list's Manual Add into *To remove*: a text
+  /// filter over what is on the list. Only these printings show, and one
+  /// *Any printing* tile per card with a generic row; nothing else.
+  final ({Set<String> printings, Set<String> anyNames})? onlyOn;
+
+  /// Where the tile steppers write — see [PickerSink].
+  final PickerSink? sink;
+
   const CardPicker({
     super.key,
     required this.scope,
     required this.db,
     this.initial = const [],
     this.inList = const {},
+    this.anyPrinting,
+    this.offerAny = false,
+    this.currentAny = false,
+    this.subtitle,
+    this.title,
+    this.onlyOn,
+    this.sink,
   });
 
   /// Open as a bottom sheet — [PickerScope.chooseVersion] and
@@ -69,6 +124,8 @@ class CardPicker extends StatefulWidget {
     required CardsDatabase db,
     List<Card> initial = const [],
     Set<String> inList = const {},
+    bool offerAny = false,
+    bool currentAny = false,
   }) =>
       showModalBottomSheet<PickerResult>(
         context: context,
@@ -79,6 +136,8 @@ class CardPicker extends StatefulWidget {
           db: db,
           initial: initial,
           inList: inList,
+          offerAny: offerAny,
+          currentAny: currentAny,
         ),
       );
 
@@ -88,6 +147,11 @@ class CardPicker extends StatefulWidget {
     BuildContext context, {
     required CardsDatabase db,
     Set<String> inList = const {},
+    ValueNotifier<bool>? anyPrinting,
+    String? subtitle,
+    String? title,
+    ({Set<String> printings, Set<String> anyNames})? onlyOn,
+    PickerSink? sink,
   }) =>
       Navigator.of(context).push<PickerResult>(MaterialPageRoute(
         builder: (_) => Scaffold(
@@ -96,6 +160,11 @@ class CardPicker extends StatefulWidget {
               scope: PickerScope.manualAdd,
               db: db,
               inList: inList,
+              anyPrinting: anyPrinting,
+              subtitle: subtitle,
+              title: title,
+              onlyOn: onlyOn,
+              sink: sink,
             ),
           ),
         ),
@@ -113,8 +182,80 @@ class _CardPickerState extends State<CardPicker> {
   bool _widened = false;
   bool _busy = false;
 
-  /// Copies queued per printing, from the tile steppers.
+  /// The query names a set — `forest lci` — so a printing is wanted, and the
+  /// *Any printing* chip greys out.
+  bool _querySet = false;
+
+  bool get _anyMode => (widget.anyPrinting?.value ?? false) && !_querySet;
+
+  /// What the grid shows. In *Any printing* mode, the first (newest) printing
+  /// of each card stands for it; on a Wishlist row's Change Version, *Any
+  /// printing* leads.
+  List<_TileItem> get _tiles {
+    final only = widget.onlyOn;
+    if (only != null) {
+      final seen = <String>{};
+      return [
+        for (final c in _shown) ...[
+          if (only.anyNames.contains(c.name) && seen.add(c.name)) (card: c, any: true),
+          if (only.printings.contains(c.id)) (card: c, any: false),
+        ],
+      ];
+    }
+    if (_anyMode) {
+      final seen = <String>{};
+      return [
+        for (final c in _shown)
+          if (seen.add(c.name)) (card: c, any: true),
+      ];
+    }
+    return [
+      if (widget.offerAny && !_querySet && _shown.isNotEmpty) (card: _shown.first, any: true),
+      for (final c in _shown) (card: c, any: false),
+    ];
+  }
+
+  static String _key(_TileItem t) => t.any ? 'any:${t.card.name}' : t.card.id;
+
+  /// Copies queued per printing, from the tile steppers — without a sink.
   final Map<String, int> _queued = {};
+
+  /// With a sink: each tile's count as the list reported it after a step,
+  /// and the tiles with a step in flight (a double tap is one step).
+  final Map<String, int> _counts = {};
+  final Set<String> _stepping = {};
+
+  int _countOf(_TileItem t) {
+    final sink = widget.sink;
+    final key = _key(t);
+    return sink == null ? _queued[key] ?? 0 : _counts[key] ?? sink.count(t.card, t.any);
+  }
+
+  Future<void> _step(_TileItem t, int delta) async {
+    final key = _key(t);
+    final sink = widget.sink;
+    if (sink == null) return _bump(key, delta);
+    if (!_stepping.add(key)) return;
+    try {
+      final n = await sink.bump(t.card, t.any, delta);
+      if (mounted) setState(() => _counts[key] = n);
+    } finally {
+      _stepping.remove(key);
+    }
+  }
+
+  /// A tile tapped. With a sink, it adds one — unless its stepper was already
+  /// used on this visit, which said how many — and closes.
+  Future<void> _choose(_TileItem t) async {
+    if (widget.sink == null) {
+      Navigator.of(context).pop(
+        PickerResult(t.card, quantity: _queued[_key(t)] ?? 0, anyPrinting: t.any),
+      );
+      return;
+    }
+    if (!_counts.containsKey(_key(t))) await _step(t, 1);
+    if (mounted) Navigator.of(context).pop();
+  }
 
   /// The query is local and cheap; this only stops the grid rebuilding on every
   /// keystroke.
@@ -137,14 +278,22 @@ class _CardPickerState extends State<CardPicker> {
   Future<void> _runSearch(String q) async {
     if (q.trim().isEmpty) {
       if (!mounted) return;
-      setState(() => _shown = widget.initial);
+      setState(() {
+        _shown = widget.initial;
+        _querySet = false;
+      });
       return;
     }
     setState(() => _busy = true);
-    final results = await widget.db.search(q);
+    final parsed = await widget.db.parseQuery(q);
+    // One tile per card wants many printings behind it: a name like "forest"
+    // has hundreds, and sixty would show only a few cards.
+    final wide = widget.anyPrinting != null || widget.onlyOn != null;
+    final results = await widget.db.search(q, limit: wide ? 600 : 60);
     if (!mounted) return;
     setState(() {
       _shown = results;
+      _querySet = parsed.setCode != null;
       _widened = true;
       _busy = false;
     });
@@ -170,20 +319,20 @@ class _CardPickerState extends State<CardPicker> {
     });
   }
 
-  void _bump(Card card, int delta) {
+  void _bump(String key, int delta) {
     setState(() {
-      final next = (_queued[card.id] ?? 0) + delta;
+      final next = (_queued[key] ?? 0) + delta;
       if (next <= 0) {
-        _queued.remove(card.id);
+        _queued.remove(key);
       } else {
-        _queued[card.id] = next;
+        _queued[key] = next;
       }
     });
   }
 
   // ---------------------------------------------------------------------------
 
-  String get _title => switch (widget.scope) {
+  String get _title => widget.title ?? switch (widget.scope) {
         PickerScope.chooseVersion => 'Choose version',
         PickerScope.manualAdd => 'Add a card',
         PickerScope.changeVersion => 'Change version',
@@ -191,10 +340,19 @@ class _CardPickerState extends State<CardPicker> {
 
   String get _subtitle {
     if (_busy) return 'Searching…';
+    if (widget.onlyOn != null) {
+      if (_searchController.text.trim().isEmpty) return 'Search what is on this list';
+      final n = _tiles.length;
+      return n == 0 ? 'Nothing on this list matches' : '$n on this list';
+    }
     if (_shown.isEmpty) {
       return widget.scope == PickerScope.manualAdd
           ? 'Search by name, or name and set'
           : 'No printings found';
+    }
+    if (_anyMode) {
+      final n = _tiles.length;
+      return '$n ${n == 1 ? 'card' : 'cards'} · one tile each';
     }
     if (_widened) return '${_shown.length} printings';
     return '${_shown.length} possible matches';
@@ -206,6 +364,7 @@ class _CardPickerState extends State<CardPicker> {
       children: [
         _header(context),
         _searchField(context),
+        if (widget.anyPrinting != null) _anyRow(context),
         Expanded(child: _grid()),
         if (widget.scope == PickerScope.chooseVersion) _escapes(context),
       ],
@@ -247,7 +406,10 @@ class _CardPickerState extends State<CardPicker> {
                   ),
                 ),
                 const SizedBox(height: 1),
-                Text(_subtitle, style: PickerTokens.mono(context, size: 11)),
+                Text(
+                  [?widget.subtitle, _subtitle].join(' · '),
+                  style: PickerTokens.mono(context, size: 11),
+                ),
               ],
             ),
           ),
@@ -310,8 +472,35 @@ class _CardPickerState extends State<CardPicker> {
       );
   }
 
+  /// The *Any printing* chip and what it means right now.
+  Widget _anyRow(BuildContext context) {
+    final t = PickerTokens.of(context);
+    final on = widget.anyPrinting!.value;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+      child: Row(children: [
+        AnyPrintingChip(
+          on: on,
+          enabled: !_querySet,
+          onChanged: (v) => setState(() => widget.anyPrinting!.value = v),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Text(
+            _querySet
+                ? 'A set code picks a printing'
+                : on
+                    ? 'Adds any printing — scans too'
+                    : 'Adds the exact printing',
+            style: TextStyle(fontSize: 12.5, color: t.textDim),
+          ),
+        ),
+      ]),
+    );
+  }
+
   Widget _grid() {
-    if (_shown.isEmpty) {
+    if (_tiles.isEmpty) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(32),
@@ -337,17 +526,19 @@ class _CardPickerState extends State<CardPicker> {
         // Card art is 0.716; the rest is the two text lines and the stepper.
         childAspectRatio: 0.50,
       ),
-      itemCount: _shown.length,
+      itemCount: _tiles.length,
       itemBuilder: (context, i) {
-        final card = _shown[i];
+        final tile = _tiles[i];
         return _Tile(
-          card: card,
-          queued: _queued[card.id] ?? 0,
-          inList: widget.inList.contains(card.id),
-          onTap: () => Navigator.of(context).pop(
-            PickerResult(card, quantity: _queued[card.id] ?? 0),
-          ),
-          onBump: (d) => _bump(card, d),
+          card: tile.card,
+          any: tile.any,
+          anyNote: tile.any && widget.offerAny
+              ? 'Any of ${_shown.length}${widget.currentAny ? ' · current' : ''}'
+              : null,
+          queued: _countOf(tile),
+          inList: !tile.any && widget.inList.contains(tile.card.id),
+          onTap: () => _choose(tile),
+          onBump: (d) => _step(tile, d),
         );
       },
     );
@@ -389,6 +580,11 @@ class _CardPickerState extends State<CardPicker> {
 /// art confirms they are in the right neighbourhood.
 class _Tile extends StatelessWidget {
   final Card card;
+
+  /// The card in any printing: an *ANY* badge, and *Any printing* where the
+  /// set line would be.
+  final bool any;
+  final String? anyNote;
   final int queued;
   final bool inList;
   final VoidCallback onTap;
@@ -396,10 +592,12 @@ class _Tile extends StatelessWidget {
 
   const _Tile({
     required this.card,
+    required this.any,
     required this.queued,
     required this.inList,
     required this.onTap,
     required this.onBump,
+    this.anyNote,
   });
 
   @override
@@ -435,6 +633,22 @@ class _Tile extends StatelessWidget {
                 // which is close enough to be misread and means the opposite.
                 if (inList)
                   Positioned(top: 5, left: 5, child: _InListPill(tokens: t)),
+                if (any)
+                  Positioned(
+                    top: 6,
+                    left: 6,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: t.sync,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        'ANY',
+                        style: PickerTokens.mono(context, size: 10, weight: FontWeight.w600, color: Colors.white),
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -451,12 +665,20 @@ class _Tile extends StatelessWidget {
             color: t.text,
           ),
         ),
-        Text(
-          '${card.setCode.toUpperCase()} · ${card.collectorNumber}',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: PickerTokens.mono(context, size: 10.5),
-        ),
+        if (any)
+          Text(
+            anyNote ?? 'Any printing',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 11, fontStyle: FontStyle.italic, color: t.syncInk),
+          )
+        else
+          Text(
+            '${card.setCode.toUpperCase()} · ${card.collectorNumber}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: PickerTokens.mono(context, size: 10.5),
+          ),
         // The shortcut for "just give me another copy" — it is what makes adding
         // several versions in one visit possible without leaving the grid.
         const SizedBox(height: 4),

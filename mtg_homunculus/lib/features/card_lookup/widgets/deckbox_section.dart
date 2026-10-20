@@ -5,6 +5,7 @@ import '../external/deckbox_sync.dart';
 import '../external/external_dao.dart';
 import '../theme/picker_tokens.dart';
 import 'deckbox_login_dialog.dart';
+import 'deckbox_rows.dart' show DeckboxTints;
 
 /// The lists folder's **Deckbox** part: one foldable group per account, its
 /// lists inside. From the Deckbox Integration UI canvas, *Lists folder* and
@@ -18,12 +19,16 @@ class DeckboxSection extends StatefulWidget {
     required this.accounts,
     required this.lists,
     required this.counts,
+    required this.staged,
     required this.onOpenList,
   });
 
   final List<ExternalAccount> accounts;
   final List<ExternalList> lists;
   final Map<int, ExternalCounts> counts;
+
+  /// Staged changes per list id.
+  final Map<int, int> staged;
   final void Function(ExternalList list) onOpenList;
 
   @override
@@ -31,6 +36,17 @@ class DeckboxSection extends StatefulWidget {
 }
 
 class _DeckboxSectionState extends State<DeckboxSection> {
+  /// Whose rows a list's counts come from: a Tradelist stores none — it is its
+  /// Inventory's rows (tradelist.md), so it counts those, for trade.
+  int _mirrorOf(ExternalList list) {
+    if (list.kind != 'tradelist') return list.id;
+    return widget.lists
+            .where((l) => l.accountId == list.accountId && l.kind == 'inventory')
+            .firstOrNull
+            ?.id ??
+        list.id;
+  }
+
   /// Folded groups. Session-only: every group opens unfolded.
   final _folded = <int>{};
 
@@ -61,7 +77,8 @@ class _DeckboxSectionState extends State<DeckboxSection> {
                 if (list.accountId == account.id)
                   _ListRow(
                     list: list,
-                    counts: widget.counts[list.id],
+                    counts: widget.counts[_mirrorOf(list)],
+                    staged: widget.staged[list.id] ?? 0,
                     pulling: pulling.contains(list.id),
                     onTap: () => widget.onOpenList(list),
                   ),
@@ -182,12 +199,14 @@ class _ListRow extends StatelessWidget {
   const _ListRow({
     required this.list,
     required this.counts,
+    required this.staged,
     required this.pulling,
     required this.onTap,
   });
 
   final ExternalList list;
   final ExternalCounts? counts;
+  final int staged;
   final bool pulling;
   final VoidCallback onTap;
 
@@ -195,17 +214,20 @@ class _ListRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = PickerTokens.of(context);
     final c = counts;
-    final copies = list.kind == 'tradelist' ? c?.forTrade ?? 0 : c?.copies ?? 0;
+    final trade = list.kind == 'tradelist';
+    final copies = trade ? c?.forTrade ?? 0 : c?.copies ?? 0;
+    final unique = trade ? c?.tradeUnique : c?.unique;
     final subtitle = list.lastPulledAt == null
         ? (pulling ? 'Pulling…' : 'Not pulled yet')
         : [
             '$copies ${copies == 1 ? 'copy' : 'copies'}',
-            if (c != null && c.unique != copies) '${c.unique} unique',
+            if (unique != null && unique != copies) '$unique unique',
             if (list.stale) 'out of date',
           ].join(' · ');
 
     return Material(
-      color: t.surface,
+      // The list's hue — blue, green, yellow — as on its pills.
+      color: t.listTint(list.kind),
       child: ListTile(
         contentPadding: const EdgeInsets.only(left: 60, right: 12),
         onTap: onTap,
@@ -217,7 +239,21 @@ class _ListRow extends StatelessWidget {
             color: list.lastPullError != null ? t.warning : t.textDim,
           ),
         ),
-        trailing: Icon(Icons.chevron_right_rounded, color: t.textFaint),
+        trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+          if (staged > 0)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+              decoration: BoxDecoration(
+                color: t.syncSoft,
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                '$staged staged',
+                style: PickerTokens.mono(context, size: 11, weight: FontWeight.w600, color: t.syncInk),
+              ),
+            ),
+          Icon(Icons.chevron_right_rounded, color: t.textFaint),
+        ]),
       ),
     );
   }

@@ -8,6 +8,7 @@ mixin _$ExternalDaoMixin on DatabaseAccessor<CollectionDatabase> {
       attachedDatabase.externalAccounts;
   $ExternalListsTable get externalLists => attachedDatabase.externalLists;
   $ExternalEntriesTable get externalEntries => attachedDatabase.externalEntries;
+  $StagedChangesTable get stagedChanges => attachedDatabase.stagedChanges;
   ExternalDaoManager get managers => ExternalDaoManager(this);
 }
 
@@ -26,4 +27,6 @@ class ExternalDaoManager {
         _db.attachedDatabase,
         _db.externalEntries,
       );
+  $$StagedChangesTableTableManager get stagedChanges =>
+      $$StagedChangesTableTableManager(_db.attachedDatabase, _db.stagedChanges);
 }
